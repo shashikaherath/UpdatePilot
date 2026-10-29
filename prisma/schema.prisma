@@ -1,0 +1,391 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum DeviceStatus {
+  UNPAIRED
+  PAIRING
+  CONNECTED
+  DISCONNECTED
+  REVOKED
+}
+
+enum JobKind {
+  SCAN
+  UPDATE
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  VERIFYING
+  VERIFICATION_FAILED
+}
+
+enum MatchStatus {
+  MATCHED
+  UNMATCHED
+  UNKNOWN
+  UNSUPPORTED
+}
+
+enum VerificationResult {
+  PENDING
+  VERIFIED_SUCCESS
+  VERIFICATION_FAILED
+  SKIPPED
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  email              String              @unique
+  passwordHash       String              @map("password_hash")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+
+  sessions           UserSession[]
+  settings           UserSettings?
+  devices            Device[]
+  jobs               Job[]
+  pairingCodes       DevicePairingCode[]
+  idempotencyRecords IdempotencyRecord[]
+  auditEvents        AuditEvent[]
+  updatePreviews     UpdatePreview[]
+
+  @@map("users")
+}
+
+model UserSession {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionIdHash String    @unique @map("session_id_hash")
+  expiresAt     DateTime  @map("expires_at")
+  revokedAt     DateTime? @map("revoked_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([sessionIdHash])
+  @@map("user_sessions")
+}
+
+model UserSettings {
+  id                         String   @id @default(uuid())
+  userId                     String   @unique @map("user_id")
+  user                       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme                      String   @default("system")
+  scanPreferences            Json     @default("{\"scanMode\": \"full\", \"scheduleIntervalDays\": 7}") @map("scan_preferences")
+  requireUpdateConfirmation Boolean  @default(true) @map("require_update_confirmation")
+  notificationPreferences    Json     @default("{\"notifyOnUpdates\": true, \"notifyOnFailures\": true}") @map("notification_preferences")
+  dataRetentionDays          Int      @default(90) @map("data_retention_days")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
+
+  @@map("user_settings")
+}
+
+model Device {
+  id           String        @id @default(uuid())
+  ownerUserId  String        @map("owner_user_id")
+  ownerUser    User          @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  deviceName   String        @map("device_name")
+  osInfo       String?       @map("os_info")
+  agentVersion String?       @map("agent_version")
+  status       DeviceStatus  @default(CONNECTED)
+  lastSeenAt   DateTime?     @map("last_seen_at")
+  pairedAt     DateTime?     @default(now()) @map("paired_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  credentials  AgentCredential[]
+  applications Application[]
+  jobs         Job[]
+  pairingCodes DevicePairingCode[]
+  auditEvents  AuditEvent[]
+  previews     UpdatePreview[]
+
+  @@index([ownerUserId])
+  @@map("devices")
+}
+
+model DevicePairingCode {
+  id             String    @id @default(uuid())
+  ownerUserId    String    @map("owner_user_id")
+  ownerUser      User      @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  deviceName     String    @map("device_name")
+  codeHash       String    @unique @map("code_hash")
+  expiresAt      DateTime  @map("expires_at")
+  usedAt         DateTime? @map("used_at")
+  pairedDeviceId String?   @map("paired_device_id")
+  pairedDevice   Device?   @relation(fields: [pairedDeviceId], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([ownerUserId])
+  @@index([codeHash])
+  @@map("device_pairing_codes")
+}
+
+model AgentCredential {
+  id             String    @id @default(uuid())
+  deviceId       String    @map("device_id")
+  device         Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  credentialHash String    @unique @map("credential_hash")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([deviceId])
+  @@index([credentialHash])
+  @@map("agent_credentials")
+}
+
+model Job {
+  id                String       @id @default(uuid())
+  deviceId          String       @map("device_id")
+  device            Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  requestedByUserId String?      @map("requested_by_user_id")
+  requestedByUser   User?        @relation(fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  kind              JobKind
+  status            JobStatus    @default(QUEUED)
+  leaseExpiresAt    DateTime?    @map("lease_expires_at")
+  claimedAt         DateTime?    @map("claimed_at")
+  startedAt         DateTime?    @map("started_at")
+  completedAt       DateTime?    @map("completed_at")
+  errorSummary      String?      @map("error_summary")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  scanJob           ScanJob?
+  updateJob         UpdateJob?
+  auditEvents       AuditEvent[]
+
+  @@index([deviceId])
+  @@index([status])
+  @@index([kind])
+  @@map("jobs")
+}
+
+model ScanJob {
+  id           String                @id @default(uuid())
+  jobId        String                @unique @map("job_id")
+  job          Job                   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  scanMode     String                @default("full") @map("scan_mode")
+  scannedCount Int                   @default(0) @map("scanned_count")
+  foundCount   Int                   @default(0) @map("found_count")
+  createdAt    DateTime              @default(now()) @map("created_at")
+
+  snapshots    ApplicationSnapshot[]
+
+  @@map("scan_jobs")
+}
+
+model Application {
+  id                String                @id @default(uuid())
+  deviceId          String                @map("device_id")
+  device            Device                @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  packageIdentityId String?               @map("package_identity_id")
+  packageIdentity   PackageIdentity?      @relation(fields: [packageIdentityId], references: [id], onDelete: SetNull)
+  displayName       String                @map("display_name")
+  publisher         String?
+  installedVersion  String                @map("installed_version")
+  source            String?               @default("unknown")
+  matchStatus       MatchStatus           @default(UNKNOWN) @map("match_status")
+  firstSeenAt       DateTime              @default(now()) @map("first_seen_at")
+  lastSeenAt        DateTime              @default(now()) @map("last_seen_at")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  snapshots         ApplicationSnapshot[]
+  updateCandidates  UpdateCandidate[]
+
+  @@index([deviceId])
+  @@index([packageIdentityId])
+  @@index([matchStatus])
+  @@map("applications")
+}
+
+model ApplicationSnapshot {
+  id               String      @id @default(uuid())
+  scanJobId        String      @map("scan_job_id")
+  scanJob          ScanJob     @relation(fields: [scanJobId], references: [id], onDelete: Cascade)
+  applicationId    String      @map("application_id")
+  application      Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  displayName      String      @map("display_name")
+  publisher        String?
+  installedVersion String      @map("installed_version")
+  matchStatus      MatchStatus @map("match_status")
+  source           String?
+  capturedAt       DateTime    @default(now()) @map("captured_at")
+
+  @@index([scanJobId])
+  @@index([applicationId])
+  @@map("application_snapshots")
+}
+
+model PackageIdentity {
+  id              String            @id @default(uuid())
+  packageId       String            @map("package_id")
+  source          String            @default("winget")
+  publisher       String?
+  architecture    String?           @default("x64")
+  matchConfidence Float?            @default(1.0) @map("match_confidence")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  releases         ReleaseMetadata[]
+  applications     Application[]
+  updateCandidates UpdateCandidate[]
+  securityFindings SecurityFinding[]
+
+  @@unique([packageId, source])
+  @@index([packageId])
+  @@map("package_identities")
+}
+
+model ReleaseMetadata {
+  id                String            @id @default(uuid())
+  packageIdentityId String            @map("package_identity_id")
+  packageIdentity   PackageIdentity   @relation(fields: [packageIdentityId], references: [id], onDelete: Cascade)
+  version           String
+  channel           String?
+  releaseDate       DateTime?         @map("release_date")
+  changelogUrl      String?           @map("changelog_url")
+  releaseNotes      String?           @map("release_notes")
+  source            String            @default("winget")
+  mayRequireAdmin   Boolean           @default(true) @map("may_require_admin")
+  fetchedAt         DateTime          @default(now()) @map("fetched_at")
+
+  updateCandidates  UpdateCandidate[]
+
+  @@unique([packageIdentityId, version])
+  @@index([packageIdentityId])
+  @@map("release_metadata")
+}
+
+model UpdateCandidate {
+  id                String           @id @default(uuid())
+  applicationId     String           @map("application_id")
+  application       Application      @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  packageIdentityId String           @map("package_identity_id")
+  packageIdentity   PackageIdentity  @relation(fields: [packageIdentityId], references: [id], onDelete: Cascade)
+  releaseMetadataId String?          @map("release_metadata_id")
+  releaseMetadata   ReleaseMetadata? @relation(fields: [releaseMetadataId], references: [id], onDelete: SetNull)
+  currentVersion    String           @map("current_version")
+  targetVersion     String           @map("target_version")
+  source            String           @default("winget")
+  checkedAt         DateTime         @default(now()) @map("checked_at")
+
+  previews          UpdatePreview[]
+  updateJobs        UpdateJob[]
+
+  @@index([applicationId])
+  @@index([packageIdentityId])
+  @@map("update_candidates")
+}
+
+model UpdatePreview {
+  id                String          @id @default(uuid())
+  updateCandidateId String          @map("update_candidate_id")
+  updateCandidate   UpdateCandidate @relation(fields: [updateCandidateId], references: [id], onDelete: Cascade)
+  deviceId          String          @map("device_id")
+  device            Device          @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  createdByUserId   String          @map("created_by_user_id")
+  createdByUser     User            @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  previewTokenHash  String          @unique @map("preview_token_hash")
+  targetVersion     String          @map("target_version")
+  source            String
+  packageId         String          @map("package_id")
+  mayRequireAdmin   Boolean         @default(true) @map("may_require_admin")
+  releaseNotesUrl   String?         @map("release_notes_url")
+  expiresAt         DateTime        @map("expires_at")
+  consumedAt        DateTime?       @map("consumed_at")
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  updateJobs        UpdateJob[]
+
+  @@index([previewTokenHash])
+  @@index([updateCandidateId])
+  @@map("update_previews")
+}
+
+model UpdateJob {
+  id                       String             @id @default(uuid())
+  jobId                    String             @unique @map("job_id")
+  job                      Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  updateCandidateId        String?            @map("update_candidate_id")
+  updateCandidate          UpdateCandidate?   @relation(fields: [updateCandidateId], references: [id], onDelete: SetNull)
+  previewId                String?            @map("preview_id")
+  preview                  UpdatePreview?     @relation(fields: [previewId], references: [id], onDelete: SetNull)
+  targetVersion            String             @map("target_version")
+  exitCode                 Int?               @map("exit_code")
+  restartRequired          Boolean            @default(false) @map("restart_required")
+  verifiedInstalledVersion String?            @map("verified_installed_version")
+  verificationResult       VerificationResult @default(PENDING) @map("verification_result")
+  safeDiagnostics          String?            @map("safe_diagnostics")
+  createdAt                DateTime           @default(now()) @map("created_at")
+  updatedAt                DateTime           @updatedAt @map("updated_at")
+
+  @@map("update_jobs")
+}
+
+model IdempotencyRecord {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  idempotencyKey String   @map("idempotency_key")
+  keyHash        String   @map("key_hash")
+  route          String
+  requestHash    String   @map("request_hash")
+  responseJobId  String?  @map("response_job_id")
+  expiresAt      DateTime @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, idempotencyKey])
+  @@map("idempotency_records")
+}
+
+model SecurityFinding {
+  id                   String          @id @default(uuid())
+  packageIdentityId    String          @map("package_identity_id")
+  packageIdentity      PackageIdentity @relation(fields: [packageIdentityId], references: [id], onDelete: Cascade)
+  advisoryId           String          @map("advisory_id")
+  severity             String
+  affectedVersionRange String          @map("affected_version_range")
+  source               String
+  publishedAt          DateTime?       @map("published_at")
+  lastVerifiedAt       DateTime        @default(now()) @map("last_verified_at")
+  createdAt            DateTime        @default(now()) @map("created_at")
+
+  @@index([packageIdentityId])
+  @@map("security_findings")
+}
+
+model AuditEvent {
+  id           String   @id @default(uuid())
+  actorType    String   @map("actor_type")
+  actorUserId  String?  @map("actor_user_id")
+  actorUser    User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  deviceId     String?  @map("device_id")
+  device       Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  jobId        String?  @map("job_id")
+  job          Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  eventType    String   @map("event_type")
+  targetType   String?  @map("target_type")
+  targetId     String?  @map("target_id")
+  safeMetadata Json?    @map("safe_metadata")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([actorUserId])
+  @@index([deviceId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("audit_events")
+}

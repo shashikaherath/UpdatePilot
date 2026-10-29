@@ -1,0 +1,503 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "UpdatePilot API",
+    "version": "1.0.0",
+    "description": "Windows software-update management system backend API. Supports dashboard web clients and local Windows agents."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "Local development server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "up_session"
+      },
+      "agentBearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque-token"
+      }
+    },
+    "schemas": {
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" },
+              "requestId": { "type": "string" },
+              "details": { "type": "object" }
+            },
+            "required": ["code", "message", "requestId"]
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register a new user account",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string", "minLength": 8 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Account created and session started" },
+          "409": { "description": "Email already registered" },
+          "422": { "description": "Validation error" }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Start a session",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Logged in successfully, session cookie set" },
+          "401": { "description": "Invalid credentials" }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Invalidate current session and clear cookie",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "204": { "description": "Session terminated" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/dashboard": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Overview metrics and stats for current user",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": { "description": "Dashboard overview statistics" }
+        }
+      }
+    },
+    "/api/v1/devices": {
+      "get": {
+        "tags": ["Devices"],
+        "summary": "List user paired devices",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": { "description": "List of user devices" }
+        }
+      }
+    },
+    "/api/v1/devices/pairing-codes": {
+      "post": {
+        "tags": ["Devices"],
+        "summary": "Generate a short-lived one-time pairing code",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["deviceName"],
+                "properties": {
+                  "deviceName": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Pairing code created" }
+        }
+      }
+    },
+    "/api/v1/devices/{id}": {
+      "delete": {
+        "tags": ["Devices"],
+        "summary": "Revoke device credentials and cancel active jobs",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Device revoked" },
+          "404": { "description": "Device not found" }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/scans": {
+      "post": {
+        "tags": ["Scans"],
+        "summary": "Queue a scan for a specific device",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scanMode": { "type": "string", "enum": ["full", "quick"], "default": "full" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "Scan queued successfully" },
+          "409": { "description": "Active scan already in progress" }
+        }
+      }
+    },
+    "/api/v1/scans/{id}": {
+      "get": {
+        "tags": ["Scans"],
+        "summary": "Get scan progress or result",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Scan status and counts" }
+        }
+      }
+    },
+    "/api/v1/applications": {
+      "get": {
+        "tags": ["Applications"],
+        "summary": "Search, filter, and paginate installed software inventory",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          { "name": "q", "in": "query", "schema": { "type": "string" } },
+          { "name": "deviceId", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["MATCHED", "UNMATCHED", "UNKNOWN", "UNSUPPORTED"] } },
+          { "name": "source", "in": "query", "schema": { "type": "string" } },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "default": "displayName" } },
+          { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"], "default": "asc" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "pageSize", "in": "query", "schema": { "type": "integer", "default": 25 } }
+        ],
+        "responses": {
+          "200": { "description": "Paginated applications inventory" }
+        }
+      }
+    },
+    "/api/v1/applications/{id}": {
+      "get": {
+        "tags": ["Applications"],
+        "summary": "Application details, matched release metadata, snapshots and advisories",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Application details" },
+          "404": { "description": "Application not found" }
+        }
+      }
+    },
+    "/api/v1/updates": {
+      "get": {
+        "tags": ["Updates"],
+        "summary": "List available update candidates",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": { "description": "Paginated list of available updates" }
+        }
+      }
+    },
+    "/api/v1/updates/{id}/preview": {
+      "post": {
+        "tags": ["Updates"],
+        "summary": "Preview an update proposal and obtain single-use preview token",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Update preview with one-time token" },
+          "404": { "description": "Candidate not found" }
+        }
+      }
+    },
+    "/api/v1/updates/{id}/execute": {
+      "post": {
+        "tags": ["Updates"],
+        "summary": "Execute confirmed update job (requires Idempotency-Key header)",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["previewToken"],
+                "properties": {
+                  "previewToken": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "Update job queued" },
+          "409": { "description": "Conflict: Token expired/consumed or idempotency payload mismatch" }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}": {
+      "get": {
+        "tags": ["Jobs"],
+        "summary": "Unified job status and details (scans and updates)",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Job status, phase, timestamps and diagnostics" }
+        }
+      }
+    },
+    "/api/v1/history": {
+      "get": {
+        "tags": ["History"],
+        "summary": "Scan and update activity history",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["SCAN", "UPDATE"] } },
+          { "name": "outcome", "in": "query", "schema": { "type": "string" } },
+          { "name": "deviceId", "in": "query", "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Paginated history entries" }
+        }
+      }
+    },
+    "/api/v1/history/export": {
+      "get": {
+        "tags": ["History"],
+        "summary": "Export history as CSV with formula-injection neutralization",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": { "description": "CSV file stream", "content": { "text/csv": {} } }
+        }
+      }
+    },
+    "/api/v1/security/findings": {
+      "get": {
+        "tags": ["Security"],
+        "summary": "Verified security advisories for matched installed applications",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": { "description": "Verified security advisories" }
+        }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "tags": ["Settings"],
+        "summary": "Read user preferences",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": { "description": "Current user settings" }
+        }
+      },
+      "patch": {
+        "tags": ["Settings"],
+        "summary": "Update user preferences",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "theme": { "type": "string", "enum": ["light", "dark", "system"] },
+                  "requireUpdateConfirmation": { "type": "boolean" },
+                  "dataRetentionDays": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated settings" }
+        }
+      }
+    },
+    "/agent/v1/pair": {
+      "post": {
+        "tags": ["Agent"],
+        "summary": "Exchange one-time pairing code for permanent device bearer token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["pairingCode"],
+                "properties": {
+                  "pairingCode": { "type": "string" },
+                  "osInfo": { "type": "string" },
+                  "agentVersion": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Device paired successfully; deviceToken returned once" }
+        }
+      }
+    },
+    "/agent/v1/heartbeat": {
+      "post": {
+        "tags": ["Agent"],
+        "summary": "Device heartbeat reporting liveness and version info",
+        "security": [{ "agentBearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Heartbeat acknowledged" }
+        }
+      }
+    },
+    "/agent/v1/jobs/claim": {
+      "post": {
+        "tags": ["Agent"],
+        "summary": "Atomically claim the next queued job assigned to this device",
+        "security": [{ "agentBearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Claimed job details" },
+          "204": { "description": "No jobs available for this device" }
+        }
+      }
+    },
+    "/agent/v1/scans/{id}/results": {
+      "post": {
+        "tags": ["Agent"],
+        "summary": "Upload scan results containing discovered software",
+        "security": [{ "agentBearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["applications"],
+                "properties": {
+                  "applications": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["displayName"],
+                      "properties": {
+                        "displayName": { "type": "string" },
+                        "publisher": { "type": "string" },
+                        "installedVersion": { "type": "string" },
+                        "source": { "type": "string" },
+                        "packageId": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Scan results persisted" }
+        }
+      }
+    },
+    "/agent/v1/jobs/{id}/result": {
+      "post": {
+        "tags": ["Agent"],
+        "summary": "Report update execution and post-update verification outcome",
+        "security": [{ "agentBearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["exitCode", "verificationResult"],
+                "properties": {
+                  "exitCode": { "type": "integer" },
+                  "restartRequired": { "type": "boolean" },
+                  "rescannedVersion": { "type": "string" },
+                  "verificationResult": { "type": "string", "enum": ["VERIFIED_SUCCESS", "VERIFICATION_FAILED", "SKIPPED"] },
+                  "safeDiagnostics": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Job outcome persisted" }
+        }
+      }
+    },
+    "/agent/v1/jobs/{id}/heartbeat": {
+      "post": {
+        "tags": ["Agent"],
+        "summary": "Renew active job lease",
+        "security": [{ "agentBearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Lease extended" }
+        }
+      }
+    }
+  }
+}
