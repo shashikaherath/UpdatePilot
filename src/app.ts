@@ -58,6 +58,17 @@ app.use(express.json());
 app.use(requestCorrelation);
 app.use(csrfProtection);
 
+// Root welcome endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({
+    name: 'UpdatePilot Backend API',
+    status: 'online',
+    version: '1.0.0',
+    health: '/health',
+    docs: '/api/docs',
+  });
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
