@@ -20,6 +20,7 @@ export const agentScanResultsSchema = z.object({
       installedVersion: z.string().default('unknown'),
       source: z.string().default('winget'),
       packageId: z.string().optional().nullable(),
+      availableVersion: z.string().optional().nullable(),
     })
   ),
 });

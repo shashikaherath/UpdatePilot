@@ -230,6 +230,18 @@ export class AgentService {
               source: item.source || 'winget',
             },
           });
+
+          // If package identity does not exist yet, register it from verified package manager source
+          if (!packageIdentity && (item.source === 'winget' || !item.source)) {
+            packageIdentity = await tx.packageIdentity.create({
+              data: {
+                packageId: item.packageId,
+                source: item.source || 'winget',
+                publisher: item.publisher || null,
+              },
+            });
+          }
+
           if (packageIdentity) {
             matchStatus = MatchStatus.MATCHED;
             matchedCount++;
@@ -286,19 +298,31 @@ export class AgentService {
           },
         });
 
-        // If package matched, check if a newer release exists in releaseMetadata to generate UpdateCandidate
+        // If package matched, check if a newer release exists or was reported to generate UpdateCandidate
         if (packageIdentity) {
-          const latestRelease = await tx.releaseMetadata.findFirst({
-            where: { packageIdentityId: packageIdentity.id },
-            orderBy: { version: 'desc' },
-          });
+          if (item.availableVersion && item.availableVersion !== appRecord.installedVersion) {
+            let release = await tx.releaseMetadata.findFirst({
+              where: {
+                packageIdentityId: packageIdentity.id,
+                version: item.availableVersion,
+              },
+            });
 
-          if (latestRelease && latestRelease.version !== appRecord.installedVersion) {
+            if (!release) {
+              release = await tx.releaseMetadata.create({
+                data: {
+                  packageIdentityId: packageIdentity.id,
+                  version: item.availableVersion,
+                  source: packageIdentity.source,
+                },
+              });
+            }
+
             const existingCandidate = await tx.updateCandidate.findFirst({
               where: {
                 applicationId: appRecord.id,
                 packageIdentityId: packageIdentity.id,
-                targetVersion: latestRelease.version,
+                targetVersion: item.availableVersion,
               },
             });
 
@@ -307,12 +331,40 @@ export class AgentService {
                 data: {
                   applicationId: appRecord.id,
                   packageIdentityId: packageIdentity.id,
-                  releaseMetadataId: latestRelease.id,
+                  releaseMetadataId: release.id,
                   currentVersion: appRecord.installedVersion,
-                  targetVersion: latestRelease.version,
+                  targetVersion: item.availableVersion,
                   source: packageIdentity.source,
                 },
               });
+            }
+          } else {
+            const latestRelease = await tx.releaseMetadata.findFirst({
+              where: { packageIdentityId: packageIdentity.id },
+              orderBy: { version: 'desc' },
+            });
+
+            if (latestRelease && latestRelease.version !== appRecord.installedVersion) {
+              const existingCandidate = await tx.updateCandidate.findFirst({
+                where: {
+                  applicationId: appRecord.id,
+                  packageIdentityId: packageIdentity.id,
+                  targetVersion: latestRelease.version,
+                },
+              });
+
+              if (!existingCandidate) {
+                await tx.updateCandidate.create({
+                  data: {
+                    applicationId: appRecord.id,
+                    packageIdentityId: packageIdentity.id,
+                    releaseMetadataId: latestRelease.id,
+                    currentVersion: appRecord.installedVersion,
+                    targetVersion: latestRelease.version,
+                    source: packageIdentity.source,
+                  },
+                });
+              }
             }
           }
         }

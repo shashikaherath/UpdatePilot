@@ -1,4 +1,5 @@
 import { prisma } from '../../config/prisma.js';
+import { config } from '../../config/index.js';
 import { JobKind, JobStatus, DeviceStatus } from '@prisma/client';
 import { ConflictError, NotFoundError } from '../../utils/errors.js';
 import { StartScanInput } from './schemas.js';
@@ -27,11 +28,63 @@ export class ScanService {
     });
 
     if (activeScan) {
-      throw new ConflictError(
-        'An active scan job is already queued or running for this device.',
-        'ACTIVE_SCAN_CONFLICT',
-        { activeJobId: activeScan.id, status: activeScan.status }
-      );
+      const now = new Date();
+      let isStale = false;
+      let staleReason = '';
+
+      if (activeScan.status === JobStatus.RUNNING) {
+        // Use proper job lease expiration: if lease expired, the running job was abandoned
+        if (activeScan.leaseExpiresAt && activeScan.leaseExpiresAt.getTime() <= now.getTime()) {
+          isStale = true;
+          staleReason = 'Scan job lease expired without completion or renewal from agent';
+        }
+      } else if (activeScan.status === JobStatus.QUEUED) {
+        // If queued longer than lease window (5 mins) and unclaimed by agent
+        const queuedAgeMs = now.getTime() - activeScan.createdAt.getTime();
+        const maxQueueWaitMs = config.JOB_LEASE_EXPIRY_MINUTES * 60 * 1000;
+        if (queuedAgeMs > maxQueueWaitMs) {
+          isStale = true;
+          staleReason = 'Scan job timed out in queue without being claimed by agent';
+        }
+      }
+
+      if (isStale) {
+        // Safely transition the abandoned/stale job to FAILED without deleting the record
+        await prisma.$transaction(async (tx) => {
+          await tx.job.update({
+            where: { id: activeScan.id },
+            data: {
+              status: JobStatus.FAILED,
+              completedAt: now,
+              leaseExpiresAt: null,
+              errorSummary: staleReason,
+            },
+          });
+          await tx.auditEvent.create({
+            data: {
+              actorType: 'SYSTEM',
+              actorUserId: userId,
+              deviceId,
+              jobId: activeScan.id,
+              eventType: 'SCAN_FAILED',
+              targetType: 'Job',
+              targetId: activeScan.id,
+              safeMetadata: { reason: staleReason, previousStatus: activeScan.status },
+            },
+          });
+        });
+      } else {
+        // Reuse genuinely active scan (lease still valid or fresh queue within lease window)
+        const existingScanJob = await prisma.scanJob.findUnique({
+          where: { jobId: activeScan.id },
+        });
+        return {
+          scanId: existingScanJob?.id || activeScan.id,
+          jobId: activeScan.id,
+          state: activeScan.status.toLowerCase(),
+          createdAt: activeScan.createdAt.toISOString(),
+        };
+      }
     }
 
     // Create persistent job + scanJob within transaction

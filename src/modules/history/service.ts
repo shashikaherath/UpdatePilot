@@ -57,6 +57,7 @@ export class HistoryService {
           scanJob: true,
           updateJob: {
             include: {
+              preview: true,
               updateCandidate: {
                 include: {
                   application: { select: { displayName: true } },
@@ -86,8 +87,14 @@ export class HistoryService {
             foundCount: job.scanJob?.foundCount,
           }
         : {
-            applicationName: job.updateJob?.updateCandidate?.application.displayName || null,
-            packageId: job.updateJob?.updateCandidate?.packageIdentity.packageId || null,
+            applicationName:
+              job.updateJob?.updateCandidate?.application?.displayName ||
+              job.updateJob?.preview?.packageId ||
+              'Software Package',
+            packageId:
+              job.updateJob?.updateCandidate?.packageIdentity?.packageId ||
+              job.updateJob?.preview?.packageId ||
+              null,
             targetVersion: job.updateJob?.targetVersion,
             exitCode: job.updateJob?.exitCode,
             restartRequired: job.updateJob?.restartRequired,
@@ -119,6 +126,7 @@ export class HistoryService {
         scanJob: true,
         updateJob: {
           include: {
+            preview: true,
             updateCandidate: {
               include: {
                 application: { select: { displayName: true } },
@@ -147,8 +155,16 @@ export class HistoryService {
 
     const rows = jobs.map((job) => {
       const isScan = job.kind === 'SCAN';
-      const appName = isScan ? 'Full System Scan' : job.updateJob?.updateCandidate?.application.displayName || 'Update';
-      const packageId = isScan ? '' : job.updateJob?.updateCandidate?.packageIdentity.packageId || '';
+      const appName = isScan
+        ? 'Full System Scan'
+        : job.updateJob?.updateCandidate?.application?.displayName ||
+          job.updateJob?.preview?.packageId ||
+          'Software Update';
+      const packageId = isScan
+        ? ''
+        : job.updateJob?.updateCandidate?.packageIdentity?.packageId ||
+          job.updateJob?.preview?.packageId ||
+          '';
       const version = isScan ? `${job.scanJob?.scannedCount || 0} apps` : job.updateJob?.targetVersion || '';
       const verification = isScan ? '' : job.updateJob?.verificationResult || '';
       const exitCode = isScan ? '' : job.updateJob?.exitCode !== null ? String(job.updateJob?.exitCode) : '';

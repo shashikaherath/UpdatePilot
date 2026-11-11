@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const listUpdatesQuerySchema = z.object({
   deviceId: z.string().uuid().optional(),
+  q: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });

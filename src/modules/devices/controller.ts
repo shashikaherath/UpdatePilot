@@ -20,6 +20,15 @@ export class DeviceController {
     }
   }
 
+  async autoEnrollDevice(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await deviceService.autoEnrollDevice(req.user!.id, req.body);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async revokeDevice(req: Request, res: Response, next: NextFunction) {
     try {
       const result = await deviceService.revokeDevice(req.user!.id, req.params.id);

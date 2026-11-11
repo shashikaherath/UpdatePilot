@@ -7,7 +7,7 @@ import { ListUpdatesQuery, ExecuteUpdateInput } from './schemas.js';
 
 export class UpdateService {
   async listUpdateCandidates(userId: string, query: ListUpdatesQuery) {
-    const { deviceId, page, pageSize } = query;
+    const { deviceId, q, page, pageSize } = query;
 
     const where: any = {
       application: {
@@ -20,6 +20,13 @@ export class UpdateService {
 
     if (deviceId) {
       where.application.deviceId = deviceId;
+    }
+
+    if (q) {
+      where.OR = [
+        { application: { displayName: { contains: q, mode: 'insensitive' } } },
+        { packageIdentity: { packageId: { contains: q, mode: 'insensitive' } } },
+      ];
     }
 
     const skip = (page - 1) * pageSize;
@@ -42,7 +49,7 @@ export class UpdateService {
             select: { packageId: true, publisher: true },
           },
           releaseMetadata: {
-            select: { changelogUrl: true, mayRequireAdmin: true, releaseDate: true },
+            select: { changelogUrl: true, mayRequireAdmin: true, releaseDate: true, releaseNotes: true },
           },
         },
       }),
@@ -55,13 +62,32 @@ export class UpdateService {
       deviceId: candidate.application.deviceId,
       deviceName: candidate.application.device.deviceName,
       packageId: candidate.packageIdentity.packageId,
-      publisher: candidate.packageIdentity.publisher,
+      publisher: candidate.packageIdentity.publisher || candidate.application.publisher,
       installedVersion: candidate.currentVersion,
       targetVersion: candidate.targetVersion,
       source: candidate.source,
-      checkedAt: candidate.checkedAt,
+      checkedAt: candidate.checkedAt.toISOString(),
       changelogUrl: candidate.releaseMetadata?.changelogUrl || null,
       mayRequireAdmin: candidate.releaseMetadata?.mayRequireAdmin ?? true,
+      application: {
+        id: candidate.application.id,
+        displayName: candidate.application.displayName,
+        publisher: candidate.packageIdentity.publisher || candidate.application.publisher,
+        installedVersion: candidate.currentVersion,
+        device: {
+          id: candidate.application.device.id,
+          deviceName: candidate.application.device.deviceName,
+        },
+      },
+      releaseMetadata: candidate.releaseMetadata
+        ? {
+            version: candidate.targetVersion,
+            releaseDate: candidate.releaseMetadata.releaseDate?.toISOString() || null,
+            changelogUrl: candidate.releaseMetadata.changelogUrl,
+            releaseNotes: candidate.releaseMetadata.releaseNotes,
+            mayRequireAdmin: candidate.releaseMetadata.mayRequireAdmin,
+          }
+        : null,
     }));
 
     return {
