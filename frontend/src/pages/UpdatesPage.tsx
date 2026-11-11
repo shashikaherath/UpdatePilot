@@ -62,7 +62,7 @@ export const UpdatesPage: React.FC = () => {
   // Job Polling State
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobDetail | null>(null);
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchUpdates = useCallback(async () => {
     try {
