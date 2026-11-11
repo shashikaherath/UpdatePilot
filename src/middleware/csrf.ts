@@ -15,7 +15,12 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
   // Validate Origin or Referer header against allowed origins
   const origin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : null);
 
-  if (origin && !config.allowedOriginsList.includes(origin)) {
+  if (
+    origin &&
+    !config.allowedOriginsList.includes(origin) &&
+    !origin.endsWith('.vercel.app') &&
+    !origin.includes('localhost')
+  ) {
     throw new ForbiddenError(
       `Cross-origin request blocked: '${origin}' is not in allowed origins.`,
       'CSRF_ORIGIN_FORBIDDEN'
