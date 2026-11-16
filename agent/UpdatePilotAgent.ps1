@@ -310,6 +310,23 @@ if ([string]::IsNullOrWhiteSpace($deviceToken)) {
             Write-Host "[SUCCESS] Machine successfully paired as '$($pairResponse.deviceName)'!" -ForegroundColor Green
             Write-Host "[SECURITY] Device token saved securely via Windows DPAPI." -ForegroundColor Green
 
+            # Register in Windows User Startup folder so agent stays online across reboots
+            try {
+                $startupFolder = [Environment]::GetFolderPath('Startup')
+                if (Test-Path $startupFolder) {
+                    $startupFile = Join-Path $startupFolder "UpdatePilot-Agent.cmd"
+                    $startupContent = @"
+@echo off
+cd /d "$agentDir"
+start "" /b powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$agentDir\UpdatePilotAgent.ps1"
+"@
+                    Set-Content -Path $startupFile -Value $startupContent -Force
+                    Write-Host "[STARTUP] Registered UpdatePilot Agent in Windows Startup folder for automatic background connection." -ForegroundColor Green
+                }
+            } catch {
+                Write-Host "[STARTUP] Note: Startup folder registration skipped: $_" -ForegroundColor Yellow
+            }
+
             if ($GUI) {
                 [void][System.Windows.Forms.MessageBox]::Show(
                     "This Windows PC has successfully connected to UpdatePilot as '$($pairResponse.deviceName)'.`n`nYour dashboard is now synchronized and ready for scans.",

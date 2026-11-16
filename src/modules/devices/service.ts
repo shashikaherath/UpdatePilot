@@ -108,8 +108,6 @@ export class DeviceService {
         await tx.device.update({
           where: { id: existingDevice.id },
           data: {
-            status: DeviceStatus.CONNECTED,
-            lastSeenAt: new Date(),
             osInfo: input.osInfo || existingDevice.osInfo,
             agentVersion: input.agentVersion || existingDevice.agentVersion,
           },
@@ -161,9 +159,9 @@ export class DeviceService {
           deviceName: input.deviceName,
           osInfo: input.osInfo || null,
           agentVersion: input.agentVersion || null,
-          status: DeviceStatus.CONNECTED,
-          lastSeenAt: new Date(),
-          pairedAt: new Date(),
+          status: DeviceStatus.UNPAIRED,
+          lastSeenAt: null,
+          pairedAt: null,
         },
       });
 

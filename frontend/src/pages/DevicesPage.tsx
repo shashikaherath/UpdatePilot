@@ -137,31 +137,19 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilo
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
-  // Handle Automatic Registration of Current Computer
-  const handleAutoRegisterCurrentDevice = async () => {
+  // Open Pairing Flow for This PC with 1-Click Setup
+  const handleConnectThisPC = async (defaultName = 'This Windows PC') => {
     try {
       setIsAutoRegistering(true);
-      const userAgent = navigator.userAgent;
-      const isWindows = userAgent.includes('Windows');
-      const estimatedOs = isWindows ? 'Windows 11 (Desktop)' : navigator.platform || 'Windows';
-      
-      const res = await deviceService.autoEnrollDevice({
-        deviceName: 'This Windows PC',
-        osInfo: estimatedOs,
-        agentVersion: '1.0.0',
-      });
-
-      setActionMessage({
-        type: 'success',
-        text: res.isNew
-          ? `Device "${res.deviceName}" registered automatically!`
-          : `Device "${res.deviceName}" connected and synchronized.`,
-      });
-      await fetchDevices();
+      setNewDeviceName(defaultName);
+      const result = await deviceService.createPairingCode(defaultName);
+      setPairingData(result);
+      setPairingTab('easy');
+      setIsPairingModalOpen(true);
     } catch (err) {
       setActionMessage({
         type: 'error',
-        text: getApiErrorMessage(err, 'Failed to auto-register current device.'),
+        text: getApiErrorMessage(err, 'Failed to generate pairing setup for this PC.'),
       });
     } finally {
       setIsAutoRegistering(false);
@@ -295,17 +283,17 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilo
           </Button>
 
           <Button
-            variant="secondary"
+            variant="primary"
             size="sm"
             loading={isAutoRegistering}
-            onClick={() => void handleAutoRegisterCurrentDevice()}
-            icon={<Monitor className="w-4 h-4 text-indigo-600" />}
+            onClick={() => void handleConnectThisPC('This Windows PC')}
+            icon={<Monitor className="w-4 h-4" />}
           >
-            Register This PC
+            Connect This PC (1-Click)
           </Button>
 
           <Button
-            variant="primary"
+            variant="secondary"
             size="sm"
             onClick={() => {
               setPairingData(null);
@@ -314,7 +302,7 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilo
             }}
             icon={<Plus className="w-4 h-4" />}
           >
-            Pair New Device
+            Pair Remote PC
           </Button>
         </div>
       </div>
@@ -351,26 +339,30 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilo
       ) : devices.length === 0 ? (
         <EmptyState
           icon={<Monitor className="w-8 h-8 text-slate-400" />}
-          title="No devices registered"
-          description="Register this Windows computer automatically or pair an external device using a pairing code."
+          title="No devices connected"
+          description="Connect your Windows computer using the 1-Click Setup to discover installed software and updates."
           action={
             <div className="flex items-center gap-3">
               <Button
                 variant="primary"
-                size="sm"
+                size="md"
                 loading={isAutoRegistering}
-                onClick={() => void handleAutoRegisterCurrentDevice()}
-                icon={<Monitor className="w-4 h-4" />}
+                onClick={() => void handleConnectThisPC('My Windows PC')}
+                icon={<Download className="w-4 h-4" />}
               >
-                Register This PC Automatically
+                Connect This PC (1-Click Setup)
               </Button>
               <Button
                 variant="secondary"
-                size="sm"
-                onClick={() => setIsPairingModalOpen(true)}
+                size="md"
+                onClick={() => {
+                  setPairingData(null);
+                  setNewDeviceName('');
+                  setIsPairingModalOpen(true);
+                }}
                 icon={<Plus className="w-4 h-4" />}
               >
-                Pair Remote Device
+                Pair Remote PC
               </Button>
             </div>
           }
@@ -430,6 +422,19 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilo
                         <span className="text-slate-700">{formatDateTime(device.pairedAt)}</span>
                       </div>
                     )}
+
+                    {device.status !== 'CONNECTED' && !isRevoked && (
+                      <div className="mt-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px] flex items-center justify-between">
+                        <span>Agent offline on this PC</span>
+                        <button
+                          type="button"
+                          onClick={() => void handleConnectThisPC(device.deviceName)}
+                          className="font-semibold underline hover:text-amber-950 text-indigo-700"
+                        >
+                          Reconnect
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -438,10 +443,11 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilo
                   <Button
                     variant="secondary"
                     size="sm"
-                    disabled={isScanning || isRevoked}
+                    disabled={isScanning || isRevoked || device.status !== 'CONNECTED'}
                     loading={isScanning}
                     onClick={() => void handleStartScan(device)}
                     icon={<Play className="w-3.5 h-3.5 text-indigo-600" />}
+                    title={device.status !== 'CONNECTED' ? 'Windows Agent is offline. Reconnect the agent on this PC first.' : 'Scan installed applications'}
                   >
                     Scan Now
                   </Button>
