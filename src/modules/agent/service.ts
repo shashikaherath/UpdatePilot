@@ -216,218 +216,228 @@ export class AgentService {
     const { applications } = input;
 
     try {
-      await prisma.$transaction(
-        async (tx) => {
-          let matchedCount = 0;
+      let matchedCount = 0;
 
-          // 1. Bulk pre-fetch existing Application records for this device
-          const existingApps = await tx.application.findMany({
-            where: { deviceId },
-          });
-          const appMap = new Map<string, typeof existingApps[0]>();
-          for (const app of existingApps) {
-            appMap.set(app.displayName.toLowerCase().trim(), app);
-          }
+      // 1. Bulk pre-fetch existing Application records for this device
+      const existingApps = await prisma.application.findMany({
+        where: { deviceId },
+      });
+      const appMap = new Map<string, typeof existingApps[0]>();
+      for (const app of existingApps) {
+        appMap.set(app.displayName.toLowerCase().trim(), app);
+      }
 
-          // 2. Bulk pre-fetch existing PackageIdentity records for all incoming packageIds
-          const rawPackageIds = Array.from(
-            new Set(
-              applications
-                .map((a) => a.packageId?.trim())
-                .filter((id): id is string => Boolean(id))
-            )
-          );
+      // 2. Bulk pre-fetch existing PackageIdentity records for all incoming packageIds
+      const rawPackageIds = Array.from(
+        new Set(
+          applications
+            .map((a) => a.packageId?.trim())
+            .filter((id): id is string => Boolean(id))
+        )
+      );
 
-          const existingPkgIdentities = rawPackageIds.length > 0
-            ? await tx.packageIdentity.findMany({
-                where: {
-                  packageId: { in: rawPackageIds, mode: 'insensitive' },
-                  source: 'winget',
-                },
-              })
-            : [];
+      const existingPkgIdentities = rawPackageIds.length > 0
+        ? await prisma.packageIdentity.findMany({
+            where: {
+              packageId: { in: rawPackageIds, mode: 'insensitive' },
+              source: 'winget',
+            },
+          })
+        : [];
 
-          const pkgMap = new Map<string, typeof existingPkgIdentities[0]>();
-          for (const pkg of existingPkgIdentities) {
-            pkgMap.set(pkg.packageId.toLowerCase(), pkg);
-          }
+      const pkgMap = new Map<string, typeof existingPkgIdentities[0]>();
+      for (const pkg of existingPkgIdentities) {
+        pkgMap.set(pkg.packageId.toLowerCase(), pkg);
+      }
 
-          // 3. Process each application with in-memory lookups
-          for (const item of applications) {
-            let packageIdentity = null;
-            let matchStatus: MatchStatus = MatchStatus.UNKNOWN;
+      const snapshots: Array<{
+        scanJobId: string;
+        applicationId: string;
+        displayName: string;
+        publisher: string | null;
+        installedVersion: string;
+        matchStatus: MatchStatus;
+        source: string | null;
+      }> = [];
 
-            if (item.packageId) {
-              const lowerPkgId = item.packageId.toLowerCase().trim();
-              packageIdentity = pkgMap.get(lowerPkgId) || null;
+      // 3. Process each application with in-memory lookups & pooled direct operations
+      for (const item of applications) {
+        let packageIdentity = null;
+        let matchStatus: MatchStatus = MatchStatus.UNKNOWN;
 
-              if (!packageIdentity && (item.source === 'winget' || !item.source)) {
-                packageIdentity = await tx.packageIdentity.create({
-                  data: {
-                    packageId: item.packageId.trim(),
-                    source: item.source || 'winget',
-                    publisher: item.publisher || null,
-                  },
-                });
-                pkgMap.set(lowerPkgId, packageIdentity);
-              }
+        if (item.packageId) {
+          const lowerPkgId = item.packageId.toLowerCase().trim();
+          packageIdentity = pkgMap.get(lowerPkgId) || null;
 
-              if (packageIdentity) {
-                matchStatus = MatchStatus.MATCHED;
-                matchedCount++;
-              } else {
-                matchStatus = MatchStatus.UNMATCHED;
-              }
-            }
-
-            // Upsert Application on this device using pre-fetched map
-            const appKey = item.displayName.toLowerCase().trim();
-            const existingApp = appMap.get(appKey);
-
-            let appRecord;
-            if (existingApp) {
-              appRecord = await tx.application.update({
-                where: { id: existingApp.id },
-                data: {
-                  installedVersion: item.installedVersion,
-                  publisher: item.publisher || existingApp.publisher,
-                  source: item.source || existingApp.source,
-                  packageIdentityId: packageIdentity ? packageIdentity.id : existingApp.packageIdentityId,
-                  matchStatus: packageIdentity ? MatchStatus.MATCHED : existingApp.matchStatus,
-                  lastSeenAt: new Date(),
-                },
-              });
-              appMap.set(appKey, appRecord);
-            } else {
-              appRecord = await tx.application.create({
-                data: {
-                  deviceId,
-                  displayName: item.displayName,
-                  publisher: item.publisher,
-                  installedVersion: item.installedVersion,
-                  source: item.source || 'unknown',
-                  packageIdentityId: packageIdentity?.id,
-                  matchStatus,
-                },
-              });
-              appMap.set(appKey, appRecord);
-            }
-
-            // Record ApplicationSnapshot for historical auditing
-            await tx.applicationSnapshot.create({
+          if (!packageIdentity && (item.source === 'winget' || !item.source)) {
+            packageIdentity = await prisma.packageIdentity.create({
               data: {
-                scanJobId: job.scanJob!.id,
-                applicationId: appRecord.id,
-                displayName: appRecord.displayName,
-                publisher: appRecord.publisher,
-                installedVersion: appRecord.installedVersion,
-                matchStatus: appRecord.matchStatus,
-                source: appRecord.source,
+                packageId: item.packageId.trim(),
+                source: item.source || 'winget',
+                publisher: item.publisher || null,
+              },
+            });
+            pkgMap.set(lowerPkgId, packageIdentity);
+          }
+
+          if (packageIdentity) {
+            matchStatus = MatchStatus.MATCHED;
+            matchedCount++;
+          } else {
+            matchStatus = MatchStatus.UNMATCHED;
+          }
+        }
+
+        // Upsert Application on this device using pre-fetched map
+        const appKey = item.displayName.toLowerCase().trim();
+        const existingApp = appMap.get(appKey);
+
+        let appRecord;
+        if (existingApp) {
+          appRecord = await prisma.application.update({
+            where: { id: existingApp.id },
+            data: {
+              installedVersion: item.installedVersion,
+              publisher: item.publisher || existingApp.publisher,
+              source: item.source || existingApp.source,
+              packageIdentityId: packageIdentity ? packageIdentity.id : existingApp.packageIdentityId,
+              matchStatus: packageIdentity ? MatchStatus.MATCHED : existingApp.matchStatus,
+              lastSeenAt: new Date(),
+            },
+          });
+          appMap.set(appKey, appRecord);
+        } else {
+          appRecord = await prisma.application.create({
+            data: {
+              deviceId,
+              displayName: item.displayName,
+              publisher: item.publisher,
+              installedVersion: item.installedVersion,
+              source: item.source || 'unknown',
+              packageIdentityId: packageIdentity?.id,
+              matchStatus,
+            },
+          });
+          appMap.set(appKey, appRecord);
+        }
+
+        // Collect ApplicationSnapshot for batch insertion
+        snapshots.push({
+          scanJobId: job.scanJob!.id,
+          applicationId: appRecord.id,
+          displayName: appRecord.displayName,
+          publisher: appRecord.publisher,
+          installedVersion: appRecord.installedVersion,
+          matchStatus: appRecord.matchStatus,
+          source: appRecord.source,
+        });
+
+        // If package matched, check if a newer release exists or was reported to generate UpdateCandidate
+        if (packageIdentity) {
+          if (item.availableVersion && item.availableVersion !== appRecord.installedVersion) {
+            let release = await prisma.releaseMetadata.findFirst({
+              where: {
+                packageIdentityId: packageIdentity.id,
+                version: item.availableVersion,
               },
             });
 
-            // If package matched, check if a newer release exists or was reported to generate UpdateCandidate
-            if (packageIdentity) {
-              if (item.availableVersion && item.availableVersion !== appRecord.installedVersion) {
-                let release = await tx.releaseMetadata.findFirst({
-                  where: {
-                    packageIdentityId: packageIdentity.id,
-                    version: item.availableVersion,
-                  },
-                });
-
-                if (!release) {
-                  release = await tx.releaseMetadata.create({
-                    data: {
-                      packageIdentityId: packageIdentity.id,
-                      version: item.availableVersion,
-                      source: packageIdentity.source,
-                    },
-                  });
-                }
-
-                // Clear any stale update candidates with different target versions for this app
-                await tx.updateCandidate.deleteMany({
-                  where: {
-                    applicationId: appRecord.id,
-                    targetVersion: { not: item.availableVersion },
-                  },
-                });
-
-                const existingCandidate = await tx.updateCandidate.findFirst({
-                  where: {
-                    applicationId: appRecord.id,
-                    packageIdentityId: packageIdentity.id,
-                    targetVersion: item.availableVersion,
-                  },
-                });
-
-                if (!existingCandidate) {
-                  await tx.updateCandidate.create({
-                    data: {
-                      applicationId: appRecord.id,
-                      packageIdentityId: packageIdentity.id,
-                      releaseMetadataId: release.id,
-                      currentVersion: appRecord.installedVersion,
-                      targetVersion: item.availableVersion,
-                      source: packageIdentity.source,
-                    },
-                  });
-                }
-              } else {
-                // Application is up-to-date: remove any stale candidate
-                await tx.updateCandidate.deleteMany({
-                  where: {
-                    applicationId: appRecord.id,
-                  },
-                });
-              }
+            if (!release) {
+              release = await prisma.releaseMetadata.create({
+                data: {
+                  packageIdentityId: packageIdentity.id,
+                  version: item.availableVersion,
+                  source: packageIdentity.source,
+                },
+              });
             }
-          }
 
-          // Mark Job as SUCCEEDED
-          await tx.job.update({
-            where: { id: job.id },
-            data: {
-              status: JobStatus.SUCCEEDED,
-              completedAt: new Date(),
-              leaseExpiresAt: null,
-              errorSummary: null,
-            },
-          });
-
-          // Update scan counts
-          await tx.scanJob.update({
-            where: { id: job.scanJob!.id },
-            data: {
-              scannedCount: applications.length,
-              foundCount: applications.length,
-            },
-          });
-
-          // Audit event
-          await tx.auditEvent.create({
-            data: {
-              actorType: 'AGENT',
-              deviceId,
-              jobId: job.id,
-              eventType: 'SCAN_COMPLETED',
-              targetType: 'ScanJob',
-              targetId: job.scanJob!.id,
-              safeMetadata: {
-                scannedCount: applications.length,
-                matchedCount,
+            // Clear any stale update candidates with different target versions for this app
+            await prisma.updateCandidate.deleteMany({
+              where: {
+                applicationId: appRecord.id,
+                targetVersion: { not: item.availableVersion },
               },
-            },
-          });
-        },
-        {
-          timeout: 60000,
-          maxWait: 15000,
+            });
+
+            const existingCandidate = await prisma.updateCandidate.findFirst({
+              where: {
+                applicationId: appRecord.id,
+                packageIdentityId: packageIdentity.id,
+                targetVersion: item.availableVersion,
+              },
+            });
+
+            if (!existingCandidate) {
+              await prisma.updateCandidate.create({
+                data: {
+                  applicationId: appRecord.id,
+                  packageIdentityId: packageIdentity.id,
+                  releaseMetadataId: release.id,
+                  currentVersion: appRecord.installedVersion,
+                  targetVersion: item.availableVersion,
+                  source: packageIdentity.source,
+                },
+              });
+            }
+          } else {
+            // Application is up-to-date: remove any stale candidate
+            await prisma.updateCandidate.deleteMany({
+              where: {
+                applicationId: appRecord.id,
+              },
+            });
+          }
         }
-      );
+      }
+
+      // 4. Batch insert all snapshots in chunks (vastly faster than individual queries)
+      if (snapshots.length > 0) {
+        for (let i = 0; i < snapshots.length; i += 100) {
+          const chunk = snapshots.slice(i, i + 100);
+          await prisma.applicationSnapshot.createMany({
+            data: chunk,
+          });
+        }
+      }
+
+      // 5. Mark Job as SUCCEEDED
+      await prisma.job.update({
+        where: { id: job.id },
+        data: {
+          status: JobStatus.SUCCEEDED,
+          completedAt: new Date(),
+          leaseExpiresAt: null,
+          errorSummary: null,
+        },
+      });
+
+      // 6. Update scan counts
+      await prisma.scanJob.update({
+        where: { id: job.scanJob!.id },
+        data: {
+          scannedCount: applications.length,
+          foundCount: applications.length,
+        },
+      });
+
+      // 7. Audit event
+      await prisma.auditEvent.create({
+        data: {
+          actorType: 'AGENT',
+          deviceId,
+          jobId: job.id,
+          eventType: 'SCAN_COMPLETED',
+          targetType: 'ScanJob',
+          targetId: job.scanJob!.id,
+          safeMetadata: {
+            scannedCount: applications.length,
+            matchedCount,
+          },
+        },
+      });
     } catch (error: any) {
-      // In case of an unhandled transaction failure, guarantee the job does not stay trapped in RUNNING status
+      // In case of an unhandled failure, guarantee the job does not stay trapped in RUNNING status
       await prisma.job.update({
         where: { id: job.id },
         data: {
