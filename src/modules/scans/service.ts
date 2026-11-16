@@ -152,6 +152,42 @@ export class ScanService {
       throw new NotFoundError('Scan job not found or access denied.', 'SCAN_NOT_FOUND');
     }
 
+    // Proactive timeout check for abandoned or stalled jobs
+    const now = new Date();
+    if (job.status === JobStatus.RUNNING) {
+      if (job.leaseExpiresAt && job.leaseExpiresAt.getTime() <= now.getTime()) {
+        const timeoutReason = 'Scan job lease expired without completion reported by the Windows agent.';
+        await prisma.job.update({
+          where: { id: job.id },
+          data: {
+            status: JobStatus.FAILED,
+            completedAt: now,
+            leaseExpiresAt: null,
+            errorSummary: timeoutReason,
+          },
+        });
+        job.status = JobStatus.FAILED;
+        job.errorSummary = timeoutReason;
+      }
+    } else if (job.status === JobStatus.QUEUED) {
+      const queuedAgeMs = now.getTime() - job.createdAt.getTime();
+      const maxQueueWaitMs = config.JOB_LEASE_EXPIRY_MINUTES * 60 * 1000;
+      if (queuedAgeMs > maxQueueWaitMs) {
+        const timeoutReason = 'Scan timed out: Windows agent did not claim this job within 5 minutes.';
+        await prisma.job.update({
+          where: { id: job.id },
+          data: {
+            status: JobStatus.FAILED,
+            completedAt: now,
+            leaseExpiresAt: null,
+            errorSummary: timeoutReason,
+          },
+        });
+        job.status = JobStatus.FAILED;
+        job.errorSummary = timeoutReason;
+      }
+    }
+
     return {
       scanId: job.scanJob.id,
       jobId: job.id,

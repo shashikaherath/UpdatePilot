@@ -10,6 +10,11 @@ import {
   Check,
   AlertTriangle,
   X,
+  Download,
+  Sparkles,
+  Terminal,
+  CheckCircle2,
+  ShieldCheck,
 } from 'lucide-react';
 import { deviceService } from '../services/deviceService';
 import { Device, PairingCodeResponse } from '../types/api';
@@ -34,10 +39,47 @@ export const DevicesPage: React.FC = () => {
 
   // Pairing modal state
   const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
+  const [pairingTab, setPairingTab] = useState<'easy' | 'manual'>('easy');
   const [newDeviceName, setNewDeviceName] = useState('');
   const [pairingLoading, setPairingLoading] = useState(false);
   const [pairingData, setPairingData] = useState<PairingCodeResponse | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
+
+  // Download 1-Click Setup Script
+  const handleDownloadInstaller = () => {
+    if (!pairingData) return;
+    const rawBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/+$/, '');
+    const currentServerUrl = rawBaseUrl.endsWith('/api/v1') ? rawBaseUrl.slice(0, -7) : rawBaseUrl;
+    const scriptContent = `@echo off
+REM =========================================================================
+REM UpdatePilot Windows Agent - 1-Click Setup for "${pairingData.deviceName}"
+REM =========================================================================
+
+setlocal EnableDelayedExpansion
+set "AGENT_DIR=%LocalAppData%\\UpdatePilot"
+if not exist "%AGENT_DIR%" mkdir "%AGENT_DIR%"
+
+REM If UpdatePilotAgent.ps1 exists alongside this script, use it; otherwise download it
+if exist "%~dp0UpdatePilotAgent.ps1" (
+    copy /y "%~dp0UpdatePilotAgent.ps1" "%AGENT_DIR%\\UpdatePilotAgent.ps1" >nul 2>&1
+) else if not exist "%AGENT_DIR%\\UpdatePilotAgent.ps1" (
+    echo [UpdatePilot] Downloading agent from server...
+    powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('${currentServerUrl}/agent/v1/download/script', '%AGENT_DIR%\\UpdatePilotAgent.ps1')"
+)
+
+cd /d "%AGENT_DIR%"
+powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilotAgent.ps1" -GUI -ServerUrl "${currentServerUrl}" -PairingCode "${pairingData.pairingCode}"
+`;
+    const blob = new Blob([scriptContent], { type: 'application/cmd' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `UpdatePilot-Setup-${pairingData.deviceName.replace(/[^a-zA-Z0-9_-]/g, '_')}.cmd`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   // Scanning / Revoking state
   const [scanningDeviceId, setScanningDeviceId] = useState<string | null>(null);
@@ -60,6 +102,15 @@ export const DevicesPage: React.FC = () => {
   useEffect(() => {
     void fetchDevices();
   }, [fetchDevices]);
+
+  // Poll for device connection while pairing modal is open
+  useEffect(() => {
+    if (!isPairingModalOpen || !pairingData) return;
+    const interval = setInterval(() => {
+      void fetchDevices();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isPairingModalOpen, pairingData, fetchDevices]);
 
   // Handle Generate Pairing Code
   const handleGeneratePairingCode = async (e: React.FormEvent) => {
@@ -432,7 +483,33 @@ export const DevicesPage: React.FC = () => {
               </button>
             </div>
 
-            {!pairingData ? (
+            {pairingData && devices.some(d => d.deviceName.toLowerCase() === pairingData.deviceName.toLowerCase() && d.status === 'CONNECTED') ? (
+              <div className="py-8 space-y-4 text-center animate-in fade-in">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+                <div>
+                  <h4 className="text-lg font-bold text-slate-900">Device Connected Successfully!</h4>
+                  <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+                    &quot;{pairingData.deviceName}&quot; is paired and actively communicating with your UpdatePilot account.
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <Button
+                    variant="primary"
+                    size="md"
+                    className="w-full"
+                    onClick={() => {
+                      setIsPairingModalOpen(false);
+                      setPairingData(null);
+                      void fetchDevices();
+                    }}
+                  >
+                    Done & View Devices
+                  </Button>
+                </div>
+              </div>
+            ) : !pairingData ? (
               <form onSubmit={handleGeneratePairingCode} className="mt-4 space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1.5">
@@ -441,13 +518,13 @@ export const DevicesPage: React.FC = () => {
                   <input
                     type="text"
                     required
-                    placeholder="e.g. DESKTOP-MAIN, Work-Laptop"
+                    placeholder="e.g. My-Windows-PC, Work-Laptop"
                     value={newDeviceName}
                     onChange={(e) => setNewDeviceName(e.target.value)}
                     className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                   <p className="text-xs text-slate-400 mt-1">
-                    A short-lived pairing code (valid for 15 minutes) will be generated.
+                    Enter a friendly name for this computer. A short-lived pairing code (valid for 15 minutes) will be generated.
                   </p>
                 </div>
 
@@ -466,67 +543,140 @@ export const DevicesPage: React.FC = () => {
                     size="sm"
                     loading={pairingLoading}
                   >
-                    Generate Code
+                    Continue
                   </Button>
                 </div>
               </form>
             ) : (
               <div className="mt-4 space-y-4">
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center">
-                  <span className="text-xs font-medium text-slate-400 block mb-1">
+                {/* Pairing Code Banner */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center">
+                  <span className="text-[11px] font-medium text-slate-400 block mb-0.5">
                     One-Time Pairing Code for &quot;{pairingData.deviceName}&quot;
                   </span>
-                  <div className="flex items-center justify-center gap-3">
+                  <div className="flex items-center justify-center gap-2">
                     <span className="text-2xl font-mono font-bold tracking-widest text-indigo-600">
                       {pairingData.pairingCode}
                     </span>
                     <button
                       onClick={() => copyToClipboard(pairingData.pairingCode)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-200 transition-colors"
+                      className="p-1 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-200 transition-colors"
                       title="Copy code"
                     >
                       {copiedCode ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                     </button>
                   </div>
-                  <span className="text-xs text-amber-600 mt-2 flex items-center justify-center gap-1">
-                    <Clock className="w-3.5 h-3.5" />
+                  <span className="text-[11px] text-amber-600 flex items-center justify-center gap-1 mt-1">
+                    <Clock className="w-3 h-3" />
                     Expires: {formatDateTime(pairingData.expiresAt)}
                   </span>
                 </div>
 
-                <div className="text-xs text-slate-600 bg-indigo-50/60 p-3 rounded-xl border border-indigo-100 space-y-2">
-                  <p className="font-semibold text-indigo-950">Pair from your Windows Terminal:</p>
-                  <p className="text-[11px] text-slate-500">
-                    Run this command in PowerShell from the project root to pair this machine with your deployed backend:
-                  </p>
-                  <div className="bg-slate-900 text-emerald-400 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto break-all select-all">
-                    powershell -ExecutionPolicy Bypass -File .\agent\UpdatePilotAgent.ps1 -ServerUrl &quot;{(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '')}&quot; -PairingCode &quot;{pairingData.pairingCode}&quot;
-                  </div>
-                  <Button
+                {/* Tab Switcher: 1-Click vs Manual */}
+                <div className="flex border-b border-slate-200 text-xs">
+                  <button
                     type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="w-full text-xs"
-                    onClick={() => {
-                      const serverUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '');
-                      copyToClipboard(`powershell -ExecutionPolicy Bypass -File .\\agent\\UpdatePilotAgent.ps1 -ServerUrl "${serverUrl}" -PairingCode "${pairingData.pairingCode}"`);
-                    }}
-                    icon={<Copy className="w-3.5 h-3.5" />}
+                    onClick={() => setPairingTab('easy')}
+                    className={`flex items-center gap-1.5 pb-2 px-3 border-b-2 font-semibold transition-all ${
+                      pairingTab === 'easy'
+                        ? 'border-indigo-600 text-indigo-600'
+                        : 'border-transparent text-slate-400 hover:text-slate-600'
+                    }`}
                   >
-                    Copy Command
-                  </Button>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    1-Click Setup (Recommended)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPairingTab('manual')}
+                    className={`flex items-center gap-1.5 pb-2 px-3 border-b-2 font-semibold transition-all ${
+                      pairingTab === 'manual'
+                        ? 'border-indigo-600 text-indigo-600'
+                        : 'border-transparent text-slate-400 hover:text-slate-600'
+                    }`}
+                  >
+                    <Terminal className="w-3.5 h-3.5" />
+                    PowerShell (Advanced)
+                  </button>
                 </div>
 
-                <div className="flex justify-end pt-2">
+                {pairingTab === 'easy' ? (
+                  <div className="space-y-3 text-xs">
+                    <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 space-y-2">
+                      <div className="flex items-center gap-2 text-indigo-950 font-semibold">
+                        <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                        <span>Simple 2-Step Windows Setup</span>
+                      </div>
+                      <ol className="list-decimal list-inside space-y-1.5 text-slate-600 text-[11px]">
+                        <li>
+                          Click below to download the pre-configured launcher:
+                        </li>
+                      </ol>
+
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        className="w-full text-xs font-semibold py-2"
+                        onClick={handleDownloadInstaller}
+                        icon={<Download className="w-3.5 h-3.5" />}
+                      >
+                        Download 1-Click Setup (.cmd)
+                      </Button>
+
+                      <ol start={2} className="list-decimal list-inside space-y-1.5 text-slate-600 text-[11px] pt-1">
+                        <li>
+                          Double-click the downloaded file in your Downloads folder.
+                        </li>
+                        <li>
+                          A Windows prompt will appear: click <strong>&quot;Allow and Connect&quot;</strong>.
+                        </li>
+                      </ol>
+                    </div>
+
+                    {/* Waiting pulse */}
+                    <div className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 text-[11px]">
+                      <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping" />
+                      <span>Waiting for agent to connect... This screen updates automatically.</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-600 bg-slate-900 text-slate-200 p-3 rounded-xl space-y-2">
+                    <p className="text-[11px] text-slate-400">
+                      Run this in PowerShell from your project directory:
+                    </p>
+                    <div className="text-emerald-400 font-mono text-[11px] break-all select-all">
+                      powershell -ExecutionPolicy Bypass -File .\agent\UpdatePilotAgent.ps1 -ServerUrl &quot;{(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '')}&quot; -PairingCode &quot;{pairingData.pairingCode}&quot;
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="w-full text-xs mt-1"
+                      onClick={() => {
+                        const rawBase = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/+$/, '');
+                        const serverUrl = rawBase.endsWith('/api/v1') ? rawBase.slice(0, -7) : rawBase;
+                        copyToClipboard(`powershell -ExecutionPolicy Bypass -File .\\agent\\UpdatePilotAgent.ps1 -ServerUrl "${serverUrl}" -PairingCode "${pairingData.pairingCode}"`);
+                      }}
+                      icon={<Copy className="w-3.5 h-3.5" />}
+                    >
+                      Copy PowerShell Command
+                    </Button>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-1">
                   <Button
-                    variant="primary"
+                    variant="secondary"
                     size="sm"
                     onClick={() => {
                       setIsPairingModalOpen(false);
+                      setPairingData(null);
                       void fetchDevices();
                     }}
                   >
-                    Done
+                    Close
                   </Button>
                 </div>
               </div>

@@ -12,6 +12,8 @@ param (
     [string]$PairingCode = "",
     [string]$DeviceToken = "",
     [switch]$AutoEnroll,
+    [switch]$GUI,
+    [switch]$NonInteractive,
     [switch]$RunOnce,
     [switch]$ResetCredentials
 )
@@ -27,11 +29,25 @@ if (-not (Test-Path $agentDir)) {
 
 $tokenFile = Join-Path $agentDir "token.dpapi"
 $metaFile  = Join-Path $agentDir "device-info.json"
+$configFile = Join-Path (Split-Path $MyInvocation.MyCommand.Path -Parent) "config.json"
 
 if ($ResetCredentials) {
     if (Test-Path $tokenFile) { Remove-Item $tokenFile -Force }
     if (Test-Path $metaFile) { Remove-Item $metaFile -Force }
     Write-Host "[UpdatePilot Agent] Stored credentials and server configurations reset." -ForegroundColor Yellow
+}
+
+# Check for local config.json file
+if (Test-Path $configFile) {
+    try {
+        $cfg = Get-Content $configFile -Raw | ConvertFrom-Json
+        if ($cfg.serverUrl -and -not $PSBoundParameters.ContainsKey('ServerUrl')) {
+            $ServerUrl = $cfg.serverUrl
+        }
+        if ($cfg.pairingCode -and [string]::IsNullOrWhiteSpace($PairingCode)) {
+            $PairingCode = $cfg.pairingCode
+        }
+    } catch {}
 }
 
 # Resolve target Server URL: Priority is (1) CLI argument, (2) env var, (3) stored device metadata, (4) default localhost
@@ -115,15 +131,117 @@ if (-not [string]::IsNullOrWhiteSpace($DeviceToken)) {
     Write-Host "[UpdatePilot Agent] Provided device token saved securely via DPAPI." -ForegroundColor Green
 }
 
+function Show-PairingConsentDialog([ref]$codeRef, [ref]$serverRef) {
+    try {
+        [void][System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+        [void][System.Reflection.Assembly]::LoadWithPartialName("System.Drawing")
+
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = "UpdatePilot - Connect this PC"
+        $form.Size = New-Object System.Drawing.Size(460, 410)
+        $form.StartPosition = "CenterScreen"
+        $form.FormBorderStyle = "FixedDialog"
+        $form.MaximizeBox = $false
+        $form.MinimizeBox = $false
+        $form.BackColor = [System.Drawing.Color]::White
+
+        # Title label
+        $titleLabel = New-Object System.Windows.Forms.Label
+        $titleLabel.Text = "Allow UpdatePilot to connect this PC?"
+        $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+        $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
+        $titleLabel.Location = New-Object System.Drawing.Point(24, 20)
+        $titleLabel.Size = New-Object System.Drawing.Size(400, 28)
+        $form.Controls.Add($titleLabel)
+
+        # Description
+        $descLabel = New-Object System.Windows.Forms.Label
+        $descLabel.Text = "Connecting this computer allows your UpdatePilot account to:`n`n• Discover installed applications (via WinGet & Registry)`n• Check for verified software updates`n• Execute software updates when you click Update in the dashboard`n• Report scan and update status safely"
+        $descLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
+        $descLabel.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
+        $descLabel.Location = New-Object System.Drawing.Point(24, 52)
+        $descLabel.Size = New-Object System.Drawing.Size(400, 115)
+        $form.Controls.Add($descLabel)
+
+        # Server URL Box
+        $serverLabel = New-Object System.Windows.Forms.Label
+        $serverLabel.Text = "Backend Server URL:"
+        $serverLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Bold)
+        $serverLabel.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
+        $serverLabel.Location = New-Object System.Drawing.Point(24, 175)
+        $serverLabel.Size = New-Object System.Drawing.Size(400, 18)
+        $form.Controls.Add($serverLabel)
+
+        $serverBox = New-Object System.Windows.Forms.TextBox
+        $serverBox.Text = $serverRef.Value
+        $serverBox.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
+        $serverBox.Location = New-Object System.Drawing.Point(24, 195)
+        $serverBox.Size = New-Object System.Drawing.Size(395, 24)
+        $form.Controls.Add($serverBox)
+
+        # Pairing Code Box
+        $codeLabel = New-Object System.Windows.Forms.Label
+        $codeLabel.Text = "1-Time Pairing Code (from your web dashboard):"
+        $codeLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Bold)
+        $codeLabel.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
+        $codeLabel.Location = New-Object System.Drawing.Point(24, 230)
+        $codeLabel.Size = New-Object System.Drawing.Size(400, 18)
+        $form.Controls.Add($codeLabel)
+
+        $codeBox = New-Object System.Windows.Forms.TextBox
+        $codeBox.Text = $codeRef.Value
+        $codeBox.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+        $codeBox.ForeColor = [System.Drawing.Color]::FromArgb(79, 70, 229)
+        $codeBox.Location = New-Object System.Drawing.Point(24, 250)
+        $codeBox.Size = New-Object System.Drawing.Size(395, 28)
+        $form.Controls.Add($codeBox)
+
+        # Cancel Button
+        $cancelButton = New-Object System.Windows.Forms.Button
+        $cancelButton.Text = "Don't Allow"
+        $cancelButton.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+        $cancelButton.Location = New-Object System.Drawing.Point(210, 310)
+        $cancelButton.Size = New-Object System.Drawing.Size(95, 32)
+        $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $form.Controls.Add($cancelButton)
+
+        # OK / Connect Button
+        $okButton = New-Object System.Windows.Forms.Button
+        $okButton.Text = "Allow and Connect"
+        $okButton.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+        $okButton.BackColor = [System.Drawing.Color]::FromArgb(79, 70, 229)
+        $okButton.ForeColor = [System.Drawing.Color]::White
+        $okButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        $okButton.FlatAppearance.BorderSize = 0
+        $okButton.Location = New-Object System.Drawing.Point(315, 310)
+        $okButton.Size = New-Object System.Drawing.Size(104, 32)
+        $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $form.Controls.Add($okButton)
+
+        $form.AcceptButton = $okButton
+        $form.CancelButton = $cancelButton
+
+        $diagRes = $form.ShowDialog()
+        if ($diagRes -eq [System.Windows.Forms.DialogResult]::OK) {
+            $codeRef.Value = $codeBox.Text.Trim()
+            $serverRef.Value = $serverBox.Text.Trim()
+            return $true
+        }
+        return $false
+    } catch {
+        Write-Host "[UpdatePilot Agent] GUI dialog note: $_" -ForegroundColor Yellow
+        return $false
+    }
+}
+
 # 1. Establish Authentication / Pairing
 $deviceToken = Get-SecureToken
 
 if ([string]::IsNullOrWhiteSpace($deviceToken)) {
     if ($AutoEnroll) {
         Write-Host "[UpdatePilot Agent] Waiting for user session to complete automatic registration..." -ForegroundColor Yellow
-        # In AutoEnroll mode, wait up to 30 seconds for token to appear if being provisioned by web app
         $waited = 0
-        while ($waited -lt 30) {
+        while ($waited -lt 15) {
             Start-Sleep -Seconds 2
             $waited += 2
             $deviceToken = Get-SecureToken
@@ -134,13 +252,30 @@ if ([string]::IsNullOrWhiteSpace($deviceToken)) {
     }
 
     if ([string]::IsNullOrWhiteSpace($deviceToken)) {
-        Write-Host "==========================================================" -ForegroundColor Cyan
-        Write-Host "         UpdatePilot Windows Agent - Pairing Setup        " -ForegroundColor Cyan
-        Write-Host "==========================================================" -ForegroundColor Cyan
-        Write-Host "No paired device credentials found." -ForegroundColor Yellow
+        # Check if GUI consent window should be displayed
+        $shouldShowGui = $GUI -or (-not $NonInteractive -and [string]::IsNullOrWhiteSpace($PairingCode))
+
+        if ($shouldShowGui) {
+            $codeRef = [ref]$PairingCode
+            $serverRef = [ref]$ServerUrl
+            $approved = Show-PairingConsentDialog $codeRef $serverRef
+
+            if (-not $approved) {
+                Write-Host "[UpdatePilot Agent] Pairing permission was declined or cancelled by user." -ForegroundColor Yellow
+                exit 0
+            }
+            $PairingCode = $codeRef.Value
+            $ServerUrl = $serverRef.Value.TrimEnd('/')
+            if ($ServerUrl.EndsWith('/api/v1')) {
+                $ServerUrl = $ServerUrl.Substring(0, $ServerUrl.Length - 7)
+            }
+        }
 
         if ([string]::IsNullOrWhiteSpace($PairingCode)) {
-            Write-Host "Go to your UpdatePilot web dashboard -> Devices -> '+ Pair New Device'."
+            Write-Host "==========================================================" -ForegroundColor Cyan
+            Write-Host "         UpdatePilot Windows Agent - Pairing Setup        " -ForegroundColor Cyan
+            Write-Host "==========================================================" -ForegroundColor Cyan
+            Write-Host "No paired device credentials found." -ForegroundColor Yellow
             $PairingCode = Read-Host "Enter the 1-time Pairing Code (e.g. UP-XXXX-XXXX)"
         }
 
@@ -174,11 +309,28 @@ if ([string]::IsNullOrWhiteSpace($deviceToken)) {
 
             Write-Host "[SUCCESS] Machine successfully paired as '$($pairResponse.deviceName)'!" -ForegroundColor Green
             Write-Host "[SECURITY] Device token saved securely via Windows DPAPI." -ForegroundColor Green
+
+            if ($GUI) {
+                [void][System.Windows.Forms.MessageBox]::Show(
+                    "This Windows PC has successfully connected to UpdatePilot as '$($pairResponse.deviceName)'.`n`nYour dashboard is now synchronized and ready for scans.",
+                    "UpdatePilot - Connected Successfully",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                )
+            }
         } catch {
             $errText = $_.Exception.Message
             if ($_.Exception.Response) {
                 $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
                 $errText = $reader.ReadToEnd()
+            }
+            if ($GUI) {
+                [void][System.Windows.Forms.MessageBox]::Show(
+                    "Pairing Failed: $errText`n`nPlease verify your Backend URL and Pairing Code.",
+                    "UpdatePilot - Pairing Error",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                )
             }
             Write-Error "Pairing failed: $errText"
             exit 1

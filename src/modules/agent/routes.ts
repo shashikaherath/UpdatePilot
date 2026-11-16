@@ -13,6 +13,9 @@ import { pairingRateLimiter } from '../../middleware/rateLimiter.js';
 
 const router = Router();
 
+// Public: Download latest Windows agent script
+router.get('/download/script', agentController.downloadScript);
+
 // Public: Pair agent device using short-lived one-time code
 router.post(
   '/pair',

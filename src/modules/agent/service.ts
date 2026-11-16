@@ -215,183 +215,230 @@ export class AgentService {
 
     const { applications } = input;
 
-    await prisma.$transaction(async (tx) => {
-      let matchedCount = 0;
+    try {
+      await prisma.$transaction(
+        async (tx) => {
+          let matchedCount = 0;
 
-      for (const item of applications) {
-        // Find matching PackageIdentity if packageId is supplied or matchable
-        let packageIdentity = null;
-        let matchStatus: MatchStatus = MatchStatus.UNKNOWN;
-
-        if (item.packageId) {
-          packageIdentity = await tx.packageIdentity.findFirst({
-            where: {
-              packageId: { equals: item.packageId, mode: 'insensitive' },
-              source: item.source || 'winget',
-            },
+          // 1. Bulk pre-fetch existing Application records for this device
+          const existingApps = await tx.application.findMany({
+            where: { deviceId },
           });
+          const appMap = new Map<string, typeof existingApps[0]>();
+          for (const app of existingApps) {
+            appMap.set(app.displayName.toLowerCase().trim(), app);
+          }
 
-          // If package identity does not exist yet, register it from verified package manager source
-          if (!packageIdentity && (item.source === 'winget' || !item.source)) {
-            packageIdentity = await tx.packageIdentity.create({
+          // 2. Bulk pre-fetch existing PackageIdentity records for all incoming packageIds
+          const rawPackageIds = Array.from(
+            new Set(
+              applications
+                .map((a) => a.packageId?.trim())
+                .filter((id): id is string => Boolean(id))
+            )
+          );
+
+          const existingPkgIdentities = rawPackageIds.length > 0
+            ? await tx.packageIdentity.findMany({
+                where: {
+                  packageId: { in: rawPackageIds, mode: 'insensitive' },
+                  source: 'winget',
+                },
+              })
+            : [];
+
+          const pkgMap = new Map<string, typeof existingPkgIdentities[0]>();
+          for (const pkg of existingPkgIdentities) {
+            pkgMap.set(pkg.packageId.toLowerCase(), pkg);
+          }
+
+          // 3. Process each application with in-memory lookups
+          for (const item of applications) {
+            let packageIdentity = null;
+            let matchStatus: MatchStatus = MatchStatus.UNKNOWN;
+
+            if (item.packageId) {
+              const lowerPkgId = item.packageId.toLowerCase().trim();
+              packageIdentity = pkgMap.get(lowerPkgId) || null;
+
+              if (!packageIdentity && (item.source === 'winget' || !item.source)) {
+                packageIdentity = await tx.packageIdentity.create({
+                  data: {
+                    packageId: item.packageId.trim(),
+                    source: item.source || 'winget',
+                    publisher: item.publisher || null,
+                  },
+                });
+                pkgMap.set(lowerPkgId, packageIdentity);
+              }
+
+              if (packageIdentity) {
+                matchStatus = MatchStatus.MATCHED;
+                matchedCount++;
+              } else {
+                matchStatus = MatchStatus.UNMATCHED;
+              }
+            }
+
+            // Upsert Application on this device using pre-fetched map
+            const appKey = item.displayName.toLowerCase().trim();
+            const existingApp = appMap.get(appKey);
+
+            let appRecord;
+            if (existingApp) {
+              appRecord = await tx.application.update({
+                where: { id: existingApp.id },
+                data: {
+                  installedVersion: item.installedVersion,
+                  publisher: item.publisher || existingApp.publisher,
+                  source: item.source || existingApp.source,
+                  packageIdentityId: packageIdentity ? packageIdentity.id : existingApp.packageIdentityId,
+                  matchStatus: packageIdentity ? MatchStatus.MATCHED : existingApp.matchStatus,
+                  lastSeenAt: new Date(),
+                },
+              });
+              appMap.set(appKey, appRecord);
+            } else {
+              appRecord = await tx.application.create({
+                data: {
+                  deviceId,
+                  displayName: item.displayName,
+                  publisher: item.publisher,
+                  installedVersion: item.installedVersion,
+                  source: item.source || 'unknown',
+                  packageIdentityId: packageIdentity?.id,
+                  matchStatus,
+                },
+              });
+              appMap.set(appKey, appRecord);
+            }
+
+            // Record ApplicationSnapshot for historical auditing
+            await tx.applicationSnapshot.create({
               data: {
-                packageId: item.packageId,
-                source: item.source || 'winget',
-                publisher: item.publisher || null,
+                scanJobId: job.scanJob!.id,
+                applicationId: appRecord.id,
+                displayName: appRecord.displayName,
+                publisher: appRecord.publisher,
+                installedVersion: appRecord.installedVersion,
+                matchStatus: appRecord.matchStatus,
+                source: appRecord.source,
               },
             });
+
+            // If package matched, check if a newer release exists or was reported to generate UpdateCandidate
+            if (packageIdentity) {
+              if (item.availableVersion && item.availableVersion !== appRecord.installedVersion) {
+                let release = await tx.releaseMetadata.findFirst({
+                  where: {
+                    packageIdentityId: packageIdentity.id,
+                    version: item.availableVersion,
+                  },
+                });
+
+                if (!release) {
+                  release = await tx.releaseMetadata.create({
+                    data: {
+                      packageIdentityId: packageIdentity.id,
+                      version: item.availableVersion,
+                      source: packageIdentity.source,
+                    },
+                  });
+                }
+
+                // Clear any stale update candidates with different target versions for this app
+                await tx.updateCandidate.deleteMany({
+                  where: {
+                    applicationId: appRecord.id,
+                    targetVersion: { not: item.availableVersion },
+                  },
+                });
+
+                const existingCandidate = await tx.updateCandidate.findFirst({
+                  where: {
+                    applicationId: appRecord.id,
+                    packageIdentityId: packageIdentity.id,
+                    targetVersion: item.availableVersion,
+                  },
+                });
+
+                if (!existingCandidate) {
+                  await tx.updateCandidate.create({
+                    data: {
+                      applicationId: appRecord.id,
+                      packageIdentityId: packageIdentity.id,
+                      releaseMetadataId: release.id,
+                      currentVersion: appRecord.installedVersion,
+                      targetVersion: item.availableVersion,
+                      source: packageIdentity.source,
+                    },
+                  });
+                }
+              } else {
+                // Application is up-to-date: remove any stale candidate
+                await tx.updateCandidate.deleteMany({
+                  where: {
+                    applicationId: appRecord.id,
+                  },
+                });
+              }
+            }
           }
 
-          if (packageIdentity) {
-            matchStatus = MatchStatus.MATCHED;
-            matchedCount++;
-          } else {
-            matchStatus = MatchStatus.UNMATCHED;
-          }
-        }
-
-        // Upsert Application on this device
-        const existingApp = await tx.application.findFirst({
-          where: {
-            deviceId,
-            displayName: item.displayName,
-          },
-        });
-
-        let appRecord;
-        if (existingApp) {
-          appRecord = await tx.application.update({
-            where: { id: existingApp.id },
+          // Mark Job as SUCCEEDED
+          await tx.job.update({
+            where: { id: job.id },
             data: {
-              installedVersion: item.installedVersion,
-              publisher: item.publisher || existingApp.publisher,
-              source: item.source || existingApp.source,
-              packageIdentityId: packageIdentity ? packageIdentity.id : existingApp.packageIdentityId,
-              matchStatus: packageIdentity ? MatchStatus.MATCHED : existingApp.matchStatus,
-              lastSeenAt: new Date(),
+              status: JobStatus.SUCCEEDED,
+              completedAt: new Date(),
+              leaseExpiresAt: null,
+              errorSummary: null,
             },
           });
-        } else {
-          appRecord = await tx.application.create({
+
+          // Update scan counts
+          await tx.scanJob.update({
+            where: { id: job.scanJob!.id },
             data: {
+              scannedCount: applications.length,
+              foundCount: applications.length,
+            },
+          });
+
+          // Audit event
+          await tx.auditEvent.create({
+            data: {
+              actorType: 'AGENT',
               deviceId,
-              displayName: item.displayName,
-              publisher: item.publisher,
-              installedVersion: item.installedVersion,
-              source: item.source || 'unknown',
-              packageIdentityId: packageIdentity?.id,
-              matchStatus,
+              jobId: job.id,
+              eventType: 'SCAN_COMPLETED',
+              targetType: 'ScanJob',
+              targetId: job.scanJob!.id,
+              safeMetadata: {
+                scannedCount: applications.length,
+                matchedCount,
+              },
             },
           });
+        },
+        {
+          timeout: 60000,
+          maxWait: 15000,
         }
-
-        // Record ApplicationSnapshot for historical auditing
-        await tx.applicationSnapshot.create({
-          data: {
-            scanJobId: job.scanJob!.id,
-            applicationId: appRecord.id,
-            displayName: appRecord.displayName,
-            publisher: appRecord.publisher,
-            installedVersion: appRecord.installedVersion,
-            matchStatus: appRecord.matchStatus,
-            source: appRecord.source,
-          },
-        });
-
-        // If package matched, check if a newer release exists or was reported to generate UpdateCandidate
-        if (packageIdentity) {
-          if (item.availableVersion && item.availableVersion !== appRecord.installedVersion) {
-            let release = await tx.releaseMetadata.findFirst({
-              where: {
-                packageIdentityId: packageIdentity.id,
-                version: item.availableVersion,
-              },
-            });
-
-            if (!release) {
-              release = await tx.releaseMetadata.create({
-                data: {
-                  packageIdentityId: packageIdentity.id,
-                  version: item.availableVersion,
-                  source: packageIdentity.source,
-                },
-              });
-            }
-
-            // Clear any stale update candidates with different target versions for this app
-            await tx.updateCandidate.deleteMany({
-              where: {
-                applicationId: appRecord.id,
-                targetVersion: { not: item.availableVersion },
-              },
-            });
-
-            const existingCandidate = await tx.updateCandidate.findFirst({
-              where: {
-                applicationId: appRecord.id,
-                packageIdentityId: packageIdentity.id,
-                targetVersion: item.availableVersion,
-              },
-            });
-
-            if (!existingCandidate) {
-              await tx.updateCandidate.create({
-                data: {
-                  applicationId: appRecord.id,
-                  packageIdentityId: packageIdentity.id,
-                  releaseMetadataId: release.id,
-                  currentVersion: appRecord.installedVersion,
-                  targetVersion: item.availableVersion,
-                  source: packageIdentity.source,
-                },
-              });
-            }
-          } else {
-            // Application is up-to-date: remove any stale candidate
-            await tx.updateCandidate.deleteMany({
-              where: {
-                applicationId: appRecord.id,
-              },
-            });
-          }
-        }
-      }
-
-      // Mark Job as SUCCEEDED
-      await tx.job.update({
+      );
+    } catch (error: any) {
+      // In case of an unhandled transaction failure, guarantee the job does not stay trapped in RUNNING status
+      await prisma.job.update({
         where: { id: job.id },
         data: {
-          status: JobStatus.SUCCEEDED,
+          status: JobStatus.FAILED,
           completedAt: new Date(),
           leaseExpiresAt: null,
+          errorSummary: error?.message ? `Scan failed during persistence: ${error.message}` : 'Failed to persist scan results',
         },
       });
-
-      // Update scan counts
-      await tx.scanJob.update({
-        where: { id: job.scanJob!.id },
-        data: {
-          scannedCount: applications.length,
-          foundCount: applications.length,
-        },
-      });
-
-      // Audit event
-      await tx.auditEvent.create({
-        data: {
-          actorType: 'AGENT',
-          deviceId,
-          jobId: job.id,
-          eventType: 'SCAN_COMPLETED',
-          targetType: 'ScanJob',
-          targetId: job.scanJob!.id,
-          safeMetadata: {
-            scannedCount: applications.length,
-            matchedCount,
-          },
-        },
-      });
-    });
+      throw error;
+    }
 
     return {
       status: 'received',
