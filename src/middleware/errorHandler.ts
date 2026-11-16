@@ -58,6 +58,29 @@ export function errorHandler(err: any, req: Request, res: Response, next: NextFu
     return;
   }
 
+  // Handle Prisma / Database Errors
+  if (err?.name?.includes('Prisma') || (typeof err?.code === 'string' && err.code.startsWith('P'))) {
+    logger.error('Database error', err, { requestId, path: req.path, code: err.code });
+    const isMissingTable = err.code === 'P2021' || (typeof err.message === 'string' && err.message.includes('does not exist'));
+    const isConnError = err.code === 'P1001' || err.code === 'P1002' || (typeof err.message === 'string' && err.message.includes("Can't reach database"));
+
+    let userMsg = 'Database operation failed. Please check database connectivity.';
+    if (isMissingTable) {
+      userMsg = 'Database tables have not been created yet. Migrations are running or pending.';
+    } else if (isConnError) {
+      userMsg = 'Unable to reach the database server. Please verify DATABASE_URL and SSL configuration.';
+    }
+
+    res.status(500).json({
+      error: {
+        code: err.code || 'DATABASE_ERROR',
+        message: userMsg,
+        requestId,
+      },
+    });
+    return;
+  }
+
   // Handle unexpected unhandled errors
   logger.error('Unhandled server error', err, { requestId, path: req.path, method: req.method });
 

@@ -1,7 +1,25 @@
+import { execSync } from 'child_process';
 import { app } from './app.js';
 import { config } from './config/index.js';
 import { prisma } from './config/prisma.js';
 import { logger } from './utils/logger.js';
+
+// In production, ensure database migrations or schema synchronization have been applied to Neon/Postgres
+if (config.isProduction) {
+  try {
+    logger.info('Ensuring database migrations are applied to production database...');
+    execSync('npx prisma migrate deploy', { stdio: 'inherit' });
+    logger.info('Database migrations applied successfully.');
+  } catch (migErr) {
+    logger.warn('prisma migrate deploy encountered an issue, attempting prisma db push fallback...', { error: migErr });
+    try {
+      execSync('npx prisma db push --skip-generate', { stdio: 'inherit' });
+      logger.info('Database schema synchronized successfully via prisma db push.');
+    } catch (pushErr) {
+      logger.error('Critical: Failed to apply database schema to PostgreSQL database:', pushErr);
+    }
+  }
+}
 
 const server = app.listen(config.PORT, '0.0.0.0', () => {
   logger.info(`UpdatePilot Backend server running on port ${config.PORT}`, {
