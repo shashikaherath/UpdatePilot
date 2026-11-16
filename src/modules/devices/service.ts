@@ -31,7 +31,23 @@ export class DeviceService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return devices;
+    // Evaluate live communication status: Agent sends heartbeats every 30s.
+    // If no heartbeat has arrived in 120 seconds (2 minutes), mark as DISCONNECTED.
+    const OFFLINE_THRESHOLD_MS = 2 * 60 * 1000;
+    const now = Date.now();
+
+    return devices.map((d) => {
+      const isStale = !d.lastSeenAt || (now - new Date(d.lastSeenAt).getTime()) > OFFLINE_THRESHOLD_MS;
+      const effectiveStatus = (d.status === DeviceStatus.CONNECTED && isStale)
+        ? DeviceStatus.DISCONNECTED
+        : d.status;
+
+      return {
+        ...d,
+        status: effectiveStatus,
+        isOnline: effectiveStatus === DeviceStatus.CONNECTED,
+      };
+    });
   }
 
   async createPairingCode(userId: string, input: CreatePairingCodeInput) {

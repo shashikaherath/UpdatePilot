@@ -14,7 +14,16 @@ export class SettingsService {
           theme: 'system',
           scanPreferences: { scanMode: 'full', scheduleIntervalDays: 7 },
           requireUpdateConfirmation: true,
-          notificationPreferences: { notifyOnUpdates: true, notifyOnFailures: true },
+          notificationPreferences: {
+            notifyOnUpdatesAvailable: true,
+            notifyOnScanCompleted: true,
+            notifyOnScanFailed: true,
+            notifyOnUpdateCompleted: true,
+            notifyOnUpdateFailed: true,
+            notifyOnDeviceOffline: true,
+            notifyOnUpdates: true,
+            notifyOnFailures: true,
+          },
           dataRetentionDays: 90,
         },
       });

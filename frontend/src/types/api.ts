@@ -185,6 +185,17 @@ export interface AuditEventItem {
   } | null;
 }
 
+export interface NotificationPreferences {
+  notifyOnUpdatesAvailable?: boolean;
+  notifyOnScanCompleted?: boolean;
+  notifyOnScanFailed?: boolean;
+  notifyOnUpdateCompleted?: boolean;
+  notifyOnUpdateFailed?: boolean;
+  notifyOnDeviceOffline?: boolean;
+  notifyOnUpdates?: boolean;
+  notifyOnFailures?: boolean;
+}
+
 export interface UserSettings {
   id: string;
   userId: string;
@@ -194,10 +205,7 @@ export interface UserSettings {
     scheduleIntervalDays: number;
   };
   requireUpdateConfirmation: boolean;
-  notificationPreferences: {
-    notifyOnUpdates: boolean;
-    notifyOnFailures: boolean;
-  };
+  notificationPreferences: NotificationPreferences;
   dataRetentionDays: number;
   createdAt: string;
   updatedAt: string;

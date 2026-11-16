@@ -3,6 +3,8 @@ import {
   Save,
   RotateCw,
   CheckCircle2,
+  Bell,
+  BellRing,
 } from 'lucide-react';
 import { settingsService, UpdateSettingsInput } from '../services/settingsService';
 import { Card } from '../components/ui/Card';
@@ -10,6 +12,10 @@ import { Button } from '../components/ui/Button';
 import { Spinner } from '../components/ui/Spinner';
 import { ErrorMessage } from '../components/ui/ErrorMessage';
 import { getApiErrorMessage } from '../lib/api';
+import {
+  getBrowserNotificationPermission,
+  requestBrowserNotificationPermission,
+} from '../utils/notifications';
 
 export const SettingsPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -22,9 +28,27 @@ export const SettingsPage: React.FC = () => {
   const [scanMode, setScanMode] = useState<'full' | 'quick'>('full');
   const [intervalDays, setIntervalDays] = useState<number>(7);
   const [requireConfirmation, setRequireConfirmation] = useState<boolean>(true);
-  const [notifyUpdates, setNotifyUpdates] = useState<boolean>(true);
-  const [notifyFailures, setNotifyFailures] = useState<boolean>(true);
   const [retentionDays, setRetentionDays] = useState<number>(90);
+
+  // Notification Preferences
+  const [notifyUpdatesAvailable, setNotifyUpdatesAvailable] = useState<boolean>(true);
+  const [notifyScanCompleted, setNotifyScanCompleted] = useState<boolean>(true);
+  const [notifyScanFailed, setNotifyScanFailed] = useState<boolean>(true);
+  const [notifyUpdateCompleted, setNotifyUpdateCompleted] = useState<boolean>(true);
+  const [notifyUpdateFailed, setNotifyUpdateFailed] = useState<boolean>(true);
+  const [notifyDeviceOffline, setNotifyDeviceOffline] = useState<boolean>(true);
+
+  // Browser Permission State
+  const [browserPermission, setBrowserPermission] = useState<string>('default');
+
+  useEffect(() => {
+    setBrowserPermission(getBrowserNotificationPermission());
+  }, []);
+
+  const handleRequestPermission = async () => {
+    const result = await requestBrowserNotificationPermission();
+    setBrowserPermission(result);
+  };
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -35,9 +59,15 @@ export const SettingsPage: React.FC = () => {
       setScanMode(data.scanPreferences?.scanMode || 'full');
       setIntervalDays(data.scanPreferences?.scheduleIntervalDays || 7);
       setRequireConfirmation(data.requireUpdateConfirmation ?? true);
-      setNotifyUpdates(data.notificationPreferences?.notifyOnUpdates ?? true);
-      setNotifyFailures(data.notificationPreferences?.notifyOnFailures ?? true);
       setRetentionDays(data.dataRetentionDays || 90);
+
+      const notifs = data.notificationPreferences;
+      setNotifyUpdatesAvailable(notifs?.notifyOnUpdatesAvailable ?? notifs?.notifyOnUpdates ?? true);
+      setNotifyScanCompleted(notifs?.notifyOnScanCompleted ?? true);
+      setNotifyScanFailed(notifs?.notifyOnScanFailed ?? notifs?.notifyOnFailures ?? true);
+      setNotifyUpdateCompleted(notifs?.notifyOnUpdateCompleted ?? true);
+      setNotifyUpdateFailed(notifs?.notifyOnUpdateFailed ?? notifs?.notifyOnFailures ?? true);
+      setNotifyDeviceOffline(notifs?.notifyOnDeviceOffline ?? true);
     } catch (err) {
       setError(getApiErrorMessage(err, 'Failed to fetch user settings.'));
     } finally {
@@ -64,8 +94,14 @@ export const SettingsPage: React.FC = () => {
         },
         requireUpdateConfirmation: requireConfirmation,
         notificationPreferences: {
-          notifyOnUpdates: notifyUpdates,
-          notifyOnFailures: notifyFailures,
+          notifyOnUpdatesAvailable: notifyUpdatesAvailable,
+          notifyOnScanCompleted: notifyScanCompleted,
+          notifyOnScanFailed: notifyScanFailed,
+          notifyOnUpdateCompleted: notifyUpdateCompleted,
+          notifyOnUpdateFailed: notifyUpdateFailed,
+          notifyOnDeviceOffline: notifyDeviceOffline,
+          notifyOnUpdates: notifyUpdatesAvailable,
+          notifyOnFailures: notifyScanFailed || notifyUpdateFailed,
         },
         dataRetentionDays: Number(retentionDays),
       };
@@ -209,6 +245,154 @@ export const SettingsPage: React.FC = () => {
                   />
                   <span className="text-slate-600">days</span>
                 </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 3: Notification Preferences */}
+          <Card title="Notification Preferences">
+            <div className="space-y-4 text-xs">
+              {/* Browser Permission Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                    <BellRing className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-900 block text-xs">
+                      Browser Desktop Notifications
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      Permission:{' '}
+                      <strong className={
+                        browserPermission === 'granted'
+                          ? 'text-emerald-600 font-bold'
+                          : browserPermission === 'denied'
+                          ? 'text-rose-600 font-bold'
+                          : 'text-amber-600 font-bold'
+                      }>
+                        {browserPermission.toUpperCase()}
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+
+                {browserPermission !== 'granted' && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleRequestPermission()}
+                    icon={<Bell className="w-3.5 h-3.5" />}
+                  >
+                    Enable Browser Notifications
+                  </Button>
+                )}
+              </div>
+
+              {/* Individual Toggles */}
+              <div className="space-y-3 pt-1">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={notifyUpdatesAvailable}
+                    onChange={(e) => setNotifyUpdatesAvailable(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-900 text-xs block">
+                      New Software Updates Available
+                    </span>
+                    <span className="text-slate-500 text-[11px]">
+                      Alert when new software versions are detected during PC discovery scans.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={notifyScanCompleted}
+                    onChange={(e) => setNotifyScanCompleted(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-900 text-xs block">
+                      Device Scan Completed
+                    </span>
+                    <span className="text-slate-500 text-[11px]">
+                      Notify when a Windows software discovery scan successfully completes.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={notifyScanFailed}
+                    onChange={(e) => setNotifyScanFailed(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-900 text-xs block">
+                      Device Scan Failed
+                    </span>
+                    <span className="text-slate-500 text-[11px]">
+                      Alert if a requested scan job fails or times out waiting for the Windows agent.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={notifyUpdateCompleted}
+                    onChange={(e) => setNotifyUpdateCompleted(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-900 text-xs block">
+                      Software Update Completed
+                    </span>
+                    <span className="text-slate-500 text-[11px]">
+                      Notify when WinGet successfully installs and verifies a target software upgrade.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={notifyUpdateFailed}
+                    onChange={(e) => setNotifyUpdateFailed(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-900 text-xs block">
+                      Software Update Failed
+                    </span>
+                    <span className="text-slate-500 text-[11px]">
+                      Alert when an update installation exits with an error or fails post-verification.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={notifyDeviceOffline}
+                    onChange={(e) => setNotifyDeviceOffline(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-900 text-xs block">
+                      Device Disconnected / Agent Offline
+                    </span>
+                    <span className="text-slate-500 text-[11px]">
+                      Alert when a paired Windows PC stops sending regular heartbeats.
+                    </span>
+                  </div>
+                </label>
               </div>
             </div>
           </Card>

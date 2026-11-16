@@ -163,8 +163,10 @@ app.use(config.API_PREFIX, apiV1Router);
 // are safely resolved even if a client or proxy calls without the /api/v1 prefix
 app.use(apiV1Router);
 
-// Mount Agent API routes: /agent/v1
+// Mount Agent API routes: both at /agent/v1 and under /api/v1/agent/v1 for deployment flexibility
 app.use(config.AGENT_API_PREFIX, agentRoutes);
+app.use(`${config.API_PREFIX}/agent/v1`, agentRoutes);
+apiV1Router.use('/agent/v1', agentRoutes);
 
 // Catch-all 404 handler
 app.use((req, res, next) => {

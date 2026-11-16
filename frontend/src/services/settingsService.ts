@@ -1,5 +1,5 @@
 import api from '../lib/api';
-import { UserSettings } from '../types/api';
+import { UserSettings, NotificationPreferences } from '../types/api';
 
 export interface UpdateSettingsInput {
   theme?: 'light' | 'dark' | 'system';
@@ -8,10 +8,7 @@ export interface UpdateSettingsInput {
     scheduleIntervalDays: number;
   };
   requireUpdateConfirmation?: boolean;
-  notificationPreferences?: {
-    notifyOnUpdates: boolean;
-    notifyOnFailures: boolean;
-  };
+  notificationPreferences?: NotificationPreferences;
   dataRetentionDays?: number;
 }
 

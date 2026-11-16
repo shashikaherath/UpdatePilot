@@ -21,6 +21,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorMessage } from '../components/ui/ErrorMessage';
 import { getApiErrorMessage } from '../lib/api';
 import { formatDateTime, formatRelativeTime } from '../utils/formatters';
+import { sendBrowserNotification } from '../utils/notifications';
 
 export const DevicesPage: React.FC = () => {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -118,6 +119,14 @@ export const DevicesPage: React.FC = () => {
 
   // Handle Start Scan with Real-Time Progress Polling
   const handleStartScan = async (device: Device) => {
+    if (device.status !== 'CONNECTED') {
+      setActionMessage({
+        type: 'error',
+        text: `Cannot start scan: "${device.deviceName}" is currently offline. Please ensure the UpdatePilot Windows agent is running on this computer.`,
+      });
+      return;
+    }
+
     try {
       setScanningDeviceId(device.id);
       setActionMessage({
@@ -127,8 +136,10 @@ export const DevicesPage: React.FC = () => {
 
       const res = await deviceService.startScan(device.id, 'full');
 
+      let pollCount = 0;
       const pollTimer = setInterval(async () => {
         try {
+          pollCount++;
           const status = await deviceService.getScanStatus(res.scanId || res.jobId);
           if (status.state === 'running') {
             setActionMessage({
@@ -142,6 +153,10 @@ export const DevicesPage: React.FC = () => {
               type: 'success',
               text: `Scan completed on ${device.deviceName}! Discovered ${status.scannedCount} applications. View them in the Applications tab.`,
             });
+            sendBrowserNotification(`UpdatePilot Scan Completed`, {
+              body: `Discovered ${status.scannedCount} applications on ${device.deviceName}.`,
+              deduplicationKey: `scan-success-${res.jobId}`,
+            });
             void fetchDevices();
           } else if (status.state === 'failed') {
             clearInterval(pollTimer);
@@ -149,6 +164,19 @@ export const DevicesPage: React.FC = () => {
             setActionMessage({
               type: 'error',
               text: `Scan failed on ${device.deviceName}: ${status.errorSummary || 'Agent timeout or execution error'}`,
+            });
+            sendBrowserNotification(`UpdatePilot Scan Failed`, {
+              body: `Scan failed on ${device.deviceName}: ${status.errorSummary || 'Execution error'}`,
+              deduplicationKey: `scan-fail-${res.jobId}`,
+            });
+            void fetchDevices();
+          } else if (status.state === 'queued' && pollCount >= 20) {
+            // Unclaimed for 40 seconds
+            clearInterval(pollTimer);
+            setScanningDeviceId(null);
+            setActionMessage({
+              type: 'error',
+              text: `Scan timed out waiting for ${device.deviceName}. The Windows agent may be offline or stopped.`,
             });
             void fetchDevices();
           }
@@ -466,13 +494,27 @@ export const DevicesPage: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="text-xs text-slate-500 bg-indigo-50/50 p-3 rounded-lg border border-indigo-100">
-                  <p className="font-semibold text-indigo-900 mb-1">How to use:</p>
-                  <ol className="list-decimal list-inside space-y-1">
-                    <li>Launch the UpdatePilot Windows Agent on your PC.</li>
-                    <li>Enter this pairing code when prompted.</li>
-                    <li>The agent will automatically exchange this code for a secure bearer token.</li>
-                  </ol>
+                <div className="text-xs text-slate-600 bg-indigo-50/60 p-3 rounded-xl border border-indigo-100 space-y-2">
+                  <p className="font-semibold text-indigo-950">Pair from your Windows Terminal:</p>
+                  <p className="text-[11px] text-slate-500">
+                    Run this command in PowerShell from the project root to pair this machine with your deployed backend:
+                  </p>
+                  <div className="bg-slate-900 text-emerald-400 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto break-all select-all">
+                    powershell -ExecutionPolicy Bypass -File .\agent\UpdatePilotAgent.ps1 -ServerUrl &quot;{(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '')}&quot; -PairingCode &quot;{pairingData.pairingCode}&quot;
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="w-full text-xs"
+                    onClick={() => {
+                      const serverUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '');
+                      copyToClipboard(`powershell -ExecutionPolicy Bypass -File .\\agent\\UpdatePilotAgent.ps1 -ServerUrl "${serverUrl}" -PairingCode "${pairingData.pairingCode}"`);
+                    }}
+                    icon={<Copy className="w-3.5 h-3.5" />}
+                  >
+                    Copy Command
+                  </Button>
                 </div>
 
                 <div className="flex justify-end pt-2">

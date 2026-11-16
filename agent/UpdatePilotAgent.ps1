@@ -31,8 +31,34 @@ $metaFile  = Join-Path $agentDir "device-info.json"
 if ($ResetCredentials) {
     if (Test-Path $tokenFile) { Remove-Item $tokenFile -Force }
     if (Test-Path $metaFile) { Remove-Item $metaFile -Force }
-    Write-Host "[UpdatePilot Agent] Stored credentials reset." -ForegroundColor Yellow
+    Write-Host "[UpdatePilot Agent] Stored credentials and server configurations reset." -ForegroundColor Yellow
 }
+
+# Resolve target Server URL: Priority is (1) CLI argument, (2) env var, (3) stored device metadata, (4) default localhost
+$savedServerUrl = $null
+if (Test-Path $metaFile) {
+    try {
+        $metaJson = Get-Content $metaFile -Raw | ConvertFrom-Json
+        if ($metaJson.serverUrl) {
+            $savedServerUrl = $metaJson.serverUrl
+        }
+    } catch {}
+}
+
+if (-not [string]::IsNullOrWhiteSpace($env:UPDATEPILOT_SERVER_URL)) {
+    $ServerUrl = $env:UPDATEPILOT_SERVER_URL.Trim()
+} elseif ($PSBoundParameters.ContainsKey('ServerUrl')) {
+    $ServerUrl = $ServerUrl.Trim()
+} elseif (-not [string]::IsNullOrWhiteSpace($savedServerUrl)) {
+    $ServerUrl = $savedServerUrl.Trim()
+}
+
+# Normalize Server URL: Strip trailing slash and accidental /api/v1 prefix
+$ServerUrl = $ServerUrl.TrimEnd('/')
+if ($ServerUrl.EndsWith('/api/v1')) {
+    $ServerUrl = $ServerUrl.Substring(0, $ServerUrl.Length - 7)
+}
+Write-Host "[UpdatePilot Agent] Active Backend URL: $ServerUrl" -ForegroundColor Cyan
 
 function Save-SecureToken([string]$token) {
     $secure = ConvertTo-SecureString $token -AsPlainText -Force
@@ -82,6 +108,7 @@ if (-not [string]::IsNullOrWhiteSpace($DeviceToken)) {
     $deviceInfo = @{
         deviceName = [System.Environment]::MachineName
         machineId  = Get-MachineIdentifier
+        serverUrl  = $ServerUrl
         enrolledAt = (Get-Date).ToString("o")
     } | ConvertTo-Json
     Set-Content -Path $metaFile -Value $deviceInfo -Force
@@ -140,6 +167,7 @@ if ([string]::IsNullOrWhiteSpace($deviceToken)) {
             $deviceInfo = @{
                 deviceId   = $pairResponse.deviceId
                 deviceName = $pairResponse.deviceName
+                serverUrl  = $ServerUrl
                 pairedAt   = (Get-Date).ToString("o")
             } | ConvertTo-Json
             Set-Content -Path $metaFile -Value $deviceInfo -Force
@@ -165,13 +193,64 @@ $headers = @{
     "Content-Type"  = "application/json"
 }
 
-# 2. Resilient WinGet Software Inventory Scanner
+# 2. Resilient WinGet Software Inventory Scanner & Update Detector
 function Invoke-SoftwareDiscovery() {
     Write-Host "[SCAN] Executing local software inventory scan..." -ForegroundColor Cyan
 
     $discoveredApps = @()
+    $upgradesMap = @{}
 
-    # Try WinGet first
+    # Step 2a: Check WinGet repository for verified available updates
+    try {
+        Write-Host "[SCAN] Checking WinGet repository for available software updates..." -ForegroundColor Cyan
+        $upgradeOutput = & winget.exe upgrade --accept-source-agreements 2>&1
+        $uLines = @($upgradeOutput)
+        $uHeaderIdx = -1
+        for ($i = 0; $i -lt $uLines.Count; $i++) {
+            $line = $uLines[$i]
+            if ($line -match '\bName\b' -and $line -match '\bId\b' -and $line -match '\bVersion\b') {
+                $uHeaderIdx = $i
+                break
+            }
+        }
+
+        if ($uHeaderIdx -ge 0) {
+            $uHeader = $uLines[$uHeaderIdx]
+            $uIdxName = $uHeader.IndexOf("Name")
+            $uIdxId = $uHeader.IndexOf("Id")
+            $uIdxVersion = $uHeader.IndexOf("Version")
+            $uIdxAvailable = $uHeader.IndexOf("Available")
+            $uIdxSource = $uHeader.IndexOf("Source")
+
+            for ($i = $uHeaderIdx + 2; $i -lt $uLines.Count; $i++) {
+                $line = $uLines[$i]
+                if ([string]::IsNullOrWhiteSpace($line) -or $line -match '^-+$') { continue }
+                if ($line -match '\b\d+\s+upgrades?\s+available\b') { break }
+
+                $uId = ""
+                $uAvail = ""
+                if ($uIdxId -gt 0 -and $uIdxVersion -gt $uIdxId -and $line.Length -gt $uIdxId) {
+                    $len = [Math]::Min($line.Length - $uIdxId, $uIdxVersion - $uIdxId)
+                    $uId = $line.Substring($uIdxId, $len).Trim()
+                }
+
+                if ($uIdxAvailable -gt 0 -and $line.Length -gt $uIdxAvailable) {
+                    $nextIdx = if ($uIdxSource -gt 0) { $uIdxSource } else { $line.Length }
+                    $len = [Math]::Min($line.Length - $uIdxAvailable, $nextIdx - $uIdxAvailable)
+                    $uAvail = $line.Substring($uIdxAvailable, $len).Trim()
+                }
+
+                if (![string]::IsNullOrWhiteSpace($uId) -and ![string]::IsNullOrWhiteSpace($uAvail)) {
+                    $upgradesMap[$uId.ToLower()] = $uAvail
+                }
+            }
+            Write-Host "[SCAN] Found $($upgradesMap.Count) verified software updates via WinGet." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "[SCAN] Note: WinGet upgrade catalog check: $_" -ForegroundColor Yellow
+    }
+
+    # Step 2b: Query all installed applications via winget list
     try {
         $wingetOutput = & winget.exe list --accept-source-agreements 2>&1
         $lines = @($wingetOutput)
@@ -233,6 +312,13 @@ function Invoke-SoftwareDiscovery() {
 
                 if ($idxSource -gt 0 -and $line.Length -gt $idxSource) {
                     $source = $line.Substring($idxSource).Trim()
+                }
+
+                # If available version not in winget list, check verified upgrades map
+                if ([string]::IsNullOrWhiteSpace($available) -and ![string]::IsNullOrWhiteSpace($id)) {
+                    if ($upgradesMap.ContainsKey($id.ToLower())) {
+                        $available = $upgradesMap[$id.ToLower()]
+                    }
                 }
 
                 if (![string]::IsNullOrWhiteSpace($name)) {

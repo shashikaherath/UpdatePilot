@@ -318,6 +318,14 @@ export class AgentService {
               });
             }
 
+            // Clear any stale update candidates with different target versions for this app
+            await tx.updateCandidate.deleteMany({
+              where: {
+                applicationId: appRecord.id,
+                targetVersion: { not: item.availableVersion },
+              },
+            });
+
             const existingCandidate = await tx.updateCandidate.findFirst({
               where: {
                 applicationId: appRecord.id,
@@ -339,33 +347,12 @@ export class AgentService {
               });
             }
           } else {
-            const latestRelease = await tx.releaseMetadata.findFirst({
-              where: { packageIdentityId: packageIdentity.id },
-              orderBy: { version: 'desc' },
+            // Application is up-to-date: remove any stale candidate
+            await tx.updateCandidate.deleteMany({
+              where: {
+                applicationId: appRecord.id,
+              },
             });
-
-            if (latestRelease && latestRelease.version !== appRecord.installedVersion) {
-              const existingCandidate = await tx.updateCandidate.findFirst({
-                where: {
-                  applicationId: appRecord.id,
-                  packageIdentityId: packageIdentity.id,
-                  targetVersion: latestRelease.version,
-                },
-              });
-
-              if (!existingCandidate) {
-                await tx.updateCandidate.create({
-                  data: {
-                    applicationId: appRecord.id,
-                    packageIdentityId: packageIdentity.id,
-                    releaseMetadataId: latestRelease.id,
-                    currentVersion: appRecord.installedVersion,
-                    targetVersion: latestRelease.version,
-                    source: packageIdentity.source,
-                  },
-                });
-              }
-            }
           }
         }
       }

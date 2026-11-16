@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Package,
   Search,
@@ -9,9 +9,20 @@ import {
   ChevronRight,
   X,
   Tag,
+  ArrowRight,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import { applicationService, ListApplicationsParams } from '../services/applicationService';
-import { Application, ApplicationDetail, MatchStatus, PaginationMeta } from '../types/api';
+import { updateService } from '../services/updateService';
+import {
+  Application,
+  ApplicationDetail,
+  MatchStatus,
+  PaginationMeta,
+  UpdatePreviewResponse,
+  JobDetail,
+} from '../types/api';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -19,12 +30,14 @@ import { Spinner } from '../components/ui/Spinner';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorMessage } from '../components/ui/ErrorMessage';
 import { getApiErrorMessage } from '../lib/api';
+import { sendBrowserNotification } from '../utils/notifications';
 
 export const ApplicationsPage: React.FC = () => {
   const [applications, setApplications] = useState<Application[]>([]);
   const [meta, setMeta] = useState<PaginationMeta>({ page: 1, pageSize: 25, total: 0, totalPages: 1 });
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,6 +48,20 @@ export const ApplicationsPage: React.FC = () => {
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [appDetail, setAppDetail] = useState<ApplicationDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // Inline Update Modal State
+  const [updatingApp, setUpdatingApp] = useState<Application | null>(null);
+  const [previewData, setPreviewData] = useState<UpdatePreviewResponse | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [executeLoading, setExecuteLoading] = useState(false);
+  const [jobStatus, setJobStatus] = useState<JobDetail | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
 
   const fetchApps = useCallback(async () => {
     try {
@@ -79,6 +106,87 @@ export const ApplicationsPage: React.FC = () => {
     }
   };
 
+  const handleTriggerUpdate = async (app: Application) => {
+    if (!app.updateCandidateId) return;
+    try {
+      setUpdatingApp(app);
+      setPreviewData(null);
+      setJobStatus(null);
+      setPreviewLoading(true);
+      const preview = await updateService.previewUpdate(app.updateCandidateId);
+      setPreviewData(preview);
+    } catch (err) {
+      setActionMessage({
+        type: 'error',
+        text: getApiErrorMessage(err, `Could not prepare update preview for ${app.displayName}.`),
+      });
+      setUpdatingApp(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleConfirmUpdate = async () => {
+    if (!updatingApp || !previewData || !updatingApp.updateCandidateId) return;
+
+    try {
+      setExecuteLoading(true);
+      const result = await updateService.executeUpdate(
+        updatingApp.updateCandidateId,
+        previewData.previewToken
+      );
+
+      // Start polling job status
+      pollIntervalRef.current = setInterval(async () => {
+        try {
+          const job = await updateService.getJob(result.jobId);
+          setJobStatus(job);
+
+          if (['SUCCEEDED', 'FAILED', 'VERIFICATION_FAILED', 'CANCELLED'].includes(job.status)) {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            if (job.status === 'SUCCEEDED') {
+              setActionMessage({
+                type: 'success',
+                text: `Successfully upgraded and verified ${updatingApp.displayName} to v${previewData.targetVersion}!`,
+              });
+              sendBrowserNotification(`Update Verified: ${updatingApp.displayName}`, {
+                body: `Upgraded to v${previewData.targetVersion} successfully!`,
+                deduplicationKey: `app-update-${result.jobId}`,
+              });
+            } else {
+              setActionMessage({
+                type: 'error',
+                text: `Update failed for ${updatingApp.displayName}: ${job.errorSummary || 'Installer error'}`,
+              });
+              sendBrowserNotification(`Update Failed: ${updatingApp.displayName}`, {
+                body: `Update failed: ${job.errorSummary || 'Exit code error'}`,
+                deduplicationKey: `app-update-fail-${result.jobId}`,
+              });
+            }
+            void fetchApps();
+          }
+        } catch (pollErr) {
+          console.error('Job polling error:', pollErr);
+        }
+      }, 2000);
+    } catch (err) {
+      setActionMessage({
+        type: 'error',
+        text: getApiErrorMessage(err, `Failed to queue update for ${updatingApp.displayName}.`),
+      });
+      handleCloseUpdateModal();
+    } finally {
+      setExecuteLoading(false);
+    }
+  };
+
+  const handleCloseUpdateModal = () => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    setUpdatingApp(null);
+    setPreviewData(null);
+    setJobStatus(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -99,6 +207,34 @@ export const ApplicationsPage: React.FC = () => {
           Refresh
         </Button>
       </div>
+
+      {/* Action Notification Banner */}
+      {actionMessage && (
+        <div
+          className={`p-3.5 rounded-xl border text-sm flex items-center justify-between transition-all ${
+            actionMessage.type === 'success'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              : actionMessage.type === 'info'
+              ? 'bg-sky-50 text-sky-800 border-sky-200'
+              : 'bg-rose-50 text-rose-800 border-rose-200'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {actionMessage.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            ) : actionMessage.type === 'error' ? (
+              <AlertTriangle className="w-4 h-4 text-rose-600" />
+            ) : null}
+            <span>{actionMessage.text}</span>
+          </div>
+          <button
+            onClick={() => setActionMessage(null)}
+            className="text-slate-400 hover:text-slate-600 text-xs font-semibold px-2 py-0.5"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Search & Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
@@ -212,13 +348,25 @@ export const ApplicationsPage: React.FC = () => {
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void handleOpenDetail(app.id)}
-                      >
-                        Details
-                      </Button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        {app.availableVersion && app.updateCandidateId && (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm"
+                            onClick={() => void handleTriggerUpdate(app)}
+                          >
+                            Update
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void handleOpenDetail(app.id)}
+                        >
+                          Details
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -352,6 +500,120 @@ export const ApplicationsPage: React.FC = () => {
                     }}
                   >
                     Close
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 2-Step Update Preview & Execution Confirmation Modal */}
+      {updatingApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
+                  <Package className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-slate-900 text-base">Confirm Software Upgrade</h3>
+              </div>
+              <button
+                onClick={handleCloseUpdateModal}
+                disabled={executeLoading}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {previewLoading || !previewData ? (
+              <div className="py-12 flex flex-col items-center justify-center">
+                <Spinner size="md" />
+                <p className="text-xs text-slate-400 mt-2">Generating single-use update preview token...</p>
+              </div>
+            ) : jobStatus ? (
+              <div className="py-6 space-y-4 text-center">
+                <div className="w-12 h-12 rounded-full mx-auto flex items-center justify-center bg-indigo-50 text-indigo-600">
+                  {jobStatus.status === 'SUCCEEDED' ? (
+                    <CheckCircle2 className="w-7 h-7 text-emerald-600" />
+                  ) : ['FAILED', 'VERIFICATION_FAILED'].includes(jobStatus.status) ? (
+                    <AlertTriangle className="w-7 h-7 text-rose-600" />
+                  ) : (
+                    <Spinner size="md" />
+                  )}
+                </div>
+
+                <div>
+                  <h4 className="font-bold text-slate-900 text-base">
+                    {jobStatus.status === 'SUCCEEDED'
+                      ? 'Upgrade Succeeded & Verified!'
+                      : ['FAILED', 'VERIFICATION_FAILED'].includes(jobStatus.status)
+                      ? 'Update Execution Failed'
+                      : 'Windows Agent Upgrading Software...'}
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {jobStatus.status === 'SUCCEEDED'
+                      ? `Successfully updated ${updatingApp.displayName} to version ${previewData.targetVersion}.`
+                      : jobStatus.errorSummary || 'The agent is executing the verified WinGet installer locally.'}
+                  </p>
+                </div>
+
+                {['SUCCEEDED', 'FAILED', 'VERIFICATION_FAILED', 'CANCELLED'].includes(jobStatus.status) && (
+                  <div className="pt-2">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleCloseUpdateModal}
+                      className="w-full"
+                    >
+                      Done
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-4 space-y-4 text-xs">
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                  <div className="font-bold text-slate-900 text-sm">{updatingApp.displayName}</div>
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <span className="text-slate-400">Current:</span>
+                    <span className="font-mono font-medium">{updatingApp.installedVersion}</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="text-slate-400">Target:</span>
+                    <span className="font-mono font-bold text-emerald-600">v{previewData.targetVersion}</span>
+                  </div>
+                  {previewData.packageId && (
+                    <div className="text-[11px] text-slate-500 font-mono">
+                      Package ID: {previewData.packageId}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800">
+                  <p className="font-semibold mb-1">Agent Installation Notice:</p>
+                  <p>
+                    This will queue a verified WinGet upgrade job for your paired Windows PC. The agent will run the upgrade locally and perform post-install verification.
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={executeLoading}
+                    onClick={handleCloseUpdateModal}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    loading={executeLoading}
+                    onClick={() => void handleConfirmUpdate()}
+                  >
+                    Confirm & Install Update
                   </Button>
                 </div>
               </div>

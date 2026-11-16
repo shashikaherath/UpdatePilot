@@ -28,6 +28,7 @@ import { Spinner } from '../components/ui/Spinner';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorMessage } from '../components/ui/ErrorMessage';
 import { getApiErrorMessage } from '../lib/api';
+import { sendBrowserNotification } from '../utils/notifications';
 
 interface BatchProgressItem {
   id: string;
@@ -175,10 +176,19 @@ export const UpdatesPage: React.FC = () => {
             ['SUCCEEDED', 'FAILED', 'VERIFICATION_FAILED', 'CANCELLED'].includes(job.status)
           ) {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            const name = activeCandidate.application?.displayName || activeCandidate.applicationName || 'Application';
             if (job.status === 'SUCCEEDED') {
-              const name = activeCandidate.application?.displayName || activeCandidate.applicationName || 'Application';
               setSuccessBanner(`Successfully updated and verified ${name} to v${previewData.targetVersion}!`);
+              sendBrowserNotification(`Update Verified: ${name}`, {
+                body: `Successfully upgraded to v${previewData.targetVersion}!`,
+                deduplicationKey: `update-success-${result.jobId}`,
+              });
               setTimeout(() => setSuccessBanner(null), 8000);
+            } else {
+              sendBrowserNotification(`Update Failed: ${name}`, {
+                body: `Update failed: ${job.errorSummary || 'Exit code error'}`,
+                deduplicationKey: `update-failed-${result.jobId}`,
+              });
             }
             void fetchUpdates();
           }
