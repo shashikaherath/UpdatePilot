@@ -3,9 +3,10 @@ import { config } from './config/index.js';
 import { prisma } from './config/prisma.js';
 import { logger } from './utils/logger.js';
 
-const server = app.listen(config.PORT, () => {
+const server = app.listen(config.PORT, '0.0.0.0', () => {
   logger.info(`UpdatePilot Backend server running on port ${config.PORT}`, {
     port: config.PORT,
+    host: '0.0.0.0',
     environment: config.NODE_ENV,
     apiPrefix: config.API_PREFIX,
     agentApiPrefix: config.AGENT_API_PREFIX,

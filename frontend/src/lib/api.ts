@@ -12,6 +12,15 @@ const api = axios.create({
   },
 });
 
+// Attach Authorization Bearer token if available (supports cross-site cookie restrictions)
+api.interceptors.request.use((reqConfig) => {
+  const token = localStorage.getItem('updatepilot_session_token');
+  if (token && reqConfig.headers && !reqConfig.headers.Authorization) {
+    reqConfig.headers.Authorization = `Bearer ${token}`;
+  }
+  return reqConfig;
+});
+
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
@@ -34,6 +43,24 @@ export function getApiErrorMessage(error: unknown, fallback = 'An unexpected err
     }
     if (typeof (error.response?.data as { message?: string })?.message === 'string') {
       return (error.response?.data as { message: string }).message;
+    }
+    if (error.response?.status === 404) {
+      return `Endpoint not found (404): ${error.config?.url || 'requested resource'}. Please verify backend route configuration.`;
+    }
+    if (error.response?.status === 401) {
+      return 'Session expired or invalid credentials. Please sign in again.';
+    }
+    if (error.response?.status === 403) {
+      return 'Access denied (403). You do not have permission to perform this action.';
+    }
+    if (error.response?.status === 500) {
+      return 'Internal server error (500). Please check backend logs and database connectivity.';
+    }
+    if (error.response?.status === 503) {
+      return 'Service temporarily unavailable (503). The database or backend may be starting up.';
+    }
+    if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+      return 'Network Error: Unable to communicate with the backend. Please ensure the backend on Render is awake and CORS allows this origin.';
     }
     if (error.message) {
       return error.message;

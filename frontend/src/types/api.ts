@@ -246,6 +246,7 @@ export interface PaginatedResponse<T> {
 
 export interface AuthResponse {
   user: User;
+  sessionToken?: string;
   message: string;
 }
 

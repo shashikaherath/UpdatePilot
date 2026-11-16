@@ -5,6 +5,7 @@ import { authService } from '../services/authService';
 import { dashboardService } from '../services/dashboardService';
 
 const STORAGE_KEY = 'updatepilot_auth_user';
+const TOKEN_KEY = 'updatepilot_session_token';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -40,6 +41,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setIsAuthenticated(false);
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(TOKEN_KEY);
       return false;
     } finally {
       setIsLoading(false);
@@ -56,6 +58,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setIsAuthenticated(false);
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(TOKEN_KEY);
     };
 
     window.addEventListener('auth:unauthorized', handleUnauthorized);
@@ -69,6 +72,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(response.user);
     setIsAuthenticated(true);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(response.user));
+    if (response.sessionToken) {
+      localStorage.setItem(TOKEN_KEY, response.sessionToken);
+    }
   };
 
   const register = async (email: string, password: string): Promise<void> => {
@@ -76,6 +82,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(response.user);
     setIsAuthenticated(true);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(response.user));
+    if (response.sessionToken) {
+      localStorage.setItem(TOKEN_KEY, response.sessionToken);
+    }
   };
 
   const logout = async (): Promise<void> => {
@@ -85,6 +94,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setIsAuthenticated(false);
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(TOKEN_KEY);
     }
   };
 

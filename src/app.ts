@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 import { config } from './config/index.js';
+import { prisma } from './config/prisma.js';
 import { requestCorrelation } from './middleware/requestCorrelation.js';
 import { csrfProtection } from './middleware/csrf.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -31,6 +32,9 @@ const __dirname = dirname(__filename);
 
 export const app = express();
 
+// Trust reverse proxy (Render, Cloudflare, Heroku) for secure cookies & correct client IP
+app.set('trust proxy', 1);
+
 // Security headers
 app.use(
   helmet({
@@ -38,24 +42,38 @@ app.use(
   })
 );
 
-// CORS configuration
+// Determine allowed origins dynamically for production and dev
+const isAllowedOrigin = (origin: string | undefined): boolean => {
+  if (!origin) return true; // Non-browser clients (agent, curl, health monitors)
+  const normalized = origin.trim().replace(/\/+$/, '');
+  const allowedList = config.allowedOriginsList.map((o) => o.trim().replace(/\/+$/, ''));
+  if (allowedList.includes(normalized) || allowedList.includes('*')) {
+    return true;
+  }
+  try {
+    const url = new URL(normalized);
+    if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') return true;
+    if (url.hostname.endsWith('.vercel.app') || url.hostname.endsWith('.onrender.com')) return true;
+  } catch {
+    // Malformed origin, fallback to strict check
+  }
+  return !config.isProduction;
+};
+
+// CORS configuration supporting credentials and all standard REST methods
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, agent)
-      if (
-        !origin ||
-        config.allowedOriginsList.includes(origin) ||
-        origin.endsWith('.vercel.app') ||
-        origin.includes('localhost') ||
-        !config.isProduction
-      ) {
+      if (isAllowedOrigin(origin)) {
         callback(null, true);
       } else {
         callback(new Error(`Origin '${origin}' not allowed by CORS`));
       }
     },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Idempotency-Key', 'x-request-id'],
+    exposedHeaders: ['x-request-id'],
   })
 );
 
@@ -64,24 +82,37 @@ app.use(express.json());
 app.use(requestCorrelation);
 app.use(csrfProtection);
 
+// Safe production health check endpoint verifying server & database connectivity
+const healthCheckHandler = async (req: express.Request, res: express.Response) => {
+  let dbStatus = 'connected';
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch {
+    dbStatus = 'disconnected';
+  }
+
+  const isHealthy = dbStatus === 'connected';
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? 'ok' : 'degraded',
+    environment: config.NODE_ENV,
+    database: dbStatus,
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+  });
+};
+
+// Health checks mounted at root and under api prefix
+app.get('/health', healthCheckHandler);
+app.get(`${config.API_PREFIX}/health`, healthCheckHandler);
+
 // Root welcome endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
     name: 'UpdatePilot Backend API',
     status: 'online',
     version: '1.0.0',
-    health: '/health',
+    health: `${config.API_PREFIX}/health`,
     docs: '/api/docs',
-  });
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'ok',
-    environment: config.NODE_ENV,
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
   });
 });
 
@@ -113,6 +144,7 @@ try {
 
 // Mount Dashboard API routes: /api/v1
 const apiV1Router = express.Router();
+apiV1Router.get('/health', healthCheckHandler);
 apiV1Router.use('/auth', authRoutes);
 apiV1Router.use('/dashboard', dashboardRoutes);
 apiV1Router.use('/devices', deviceRoutes);
@@ -124,7 +156,12 @@ apiV1Router.use('/history', historyRoutes);
 apiV1Router.use('/security', securityRoutes);
 apiV1Router.use('/settings', settingsRoutes);
 
+// Primary mount under /api/v1
 app.use(config.API_PREFIX, apiV1Router);
+
+// Also mount apiV1Router at root so endpoints like /auth/login, /devices, etc.
+// are safely resolved even if a client or proxy calls without the /api/v1 prefix
+app.use(apiV1Router);
 
 // Mount Agent API routes: /agent/v1
 app.use(config.AGENT_API_PREFIX, agentRoutes);
