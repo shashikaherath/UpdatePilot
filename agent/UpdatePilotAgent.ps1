@@ -28,7 +28,7 @@ if (-not (Test-Path $agentDir)) {
 }
 
 $tokenFile = Join-Path $agentDir "token.dpapi"
-$metaFile  = Join-Path $agentDir "device-info.json"
+$metaFile = Join-Path $agentDir "device-info.json"
 $configFile = Join-Path (Split-Path $MyInvocation.MyCommand.Path -Parent) "config.json"
 
 if ($ResetCredentials) {
@@ -47,7 +47,8 @@ if (Test-Path $configFile) {
         if ($cfg.pairingCode -and [string]::IsNullOrWhiteSpace($PairingCode)) {
             $PairingCode = $cfg.pairingCode
         }
-    } catch {}
+    }
+    catch {}
 }
 
 # Resolve target Server URL: Priority is (1) CLI argument, (2) env var, (3) stored device metadata, (4) default localhost
@@ -58,14 +59,17 @@ if (Test-Path $metaFile) {
         if ($metaJson.serverUrl) {
             $savedServerUrl = $metaJson.serverUrl
         }
-    } catch {}
+    }
+    catch {}
 }
 
 if (-not [string]::IsNullOrWhiteSpace($env:UPDATEPILOT_SERVER_URL)) {
     $ServerUrl = $env:UPDATEPILOT_SERVER_URL.Trim()
-} elseif ($PSBoundParameters.ContainsKey('ServerUrl')) {
+}
+elseif ($PSBoundParameters.ContainsKey('ServerUrl')) {
     $ServerUrl = $ServerUrl.Trim()
-} elseif (-not [string]::IsNullOrWhiteSpace($savedServerUrl)) {
+}
+elseif (-not [string]::IsNullOrWhiteSpace($savedServerUrl)) {
     $ServerUrl = $savedServerUrl.Trim()
 }
 
@@ -89,7 +93,8 @@ function Get-SecureToken() {
         $token = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
         [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
         return $token
-    } catch {
+    }
+    catch {
         return $null
     }
 }
@@ -100,11 +105,13 @@ function Get-MachineIdentifier() {
         if ($cs -and $cs.UUID -and $cs.UUID -ne "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF") {
             return $cs.UUID
         }
-    } catch {}
+    }
+    catch {}
     try {
         $guid = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Cryptography" -Name "MachineGuid" -ErrorAction SilentlyContinue).MachineGuid
         if ($guid) { return $guid }
-    } catch {}
+    }
+    catch {}
     return [System.Environment]::MachineName
 }
 
@@ -114,7 +121,8 @@ function Get-OsInformation() {
         if ($os) {
             return "$($os.Caption) (Build $($os.BuildNumber))"
         }
-    } catch {}
+    }
+    catch {}
     return "Windows 11 (Desktop)"
 }
 
@@ -228,7 +236,8 @@ function Show-PairingConsentDialog([ref]$codeRef, [ref]$serverRef) {
             return $true
         }
         return $false
-    } catch {
+    }
+    catch {
         Write-Host "[UpdatePilot Agent] GUI dialog note: $_" -ForegroundColor Yellow
         return $false
     }
@@ -239,7 +248,8 @@ function Show-PairingConsentDialog([ref]$codeRef, [ref]$serverRef) {
 if (-not [string]::IsNullOrWhiteSpace($PairingCode) -or $ResetCredentials) {
     if (Test-Path $tokenFile) { Remove-Item $tokenFile -Force }
     $deviceToken = $null
-} else {
+}
+else {
     $deviceToken = Get-SecureToken
 }
 
@@ -329,7 +339,8 @@ start "" /b powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidde
                     Set-Content -Path $startupFile -Value $startupContent -Force
                     Write-Host "[STARTUP] Registered UpdatePilot Agent in Windows Startup folder for automatic background connection." -ForegroundColor Green
                 }
-            } catch {
+            }
+            catch {
                 Write-Host "[STARTUP] Note: Startup folder registration skipped: $_" -ForegroundColor Yellow
             }
 
@@ -341,7 +352,8 @@ start "" /b powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidde
                     [System.Windows.Forms.MessageBoxIcon]::Information
                 )
             }
-        } catch {
+        }
+        catch {
             $errText = $_.Exception.Message
             if ($_.Exception.Response) {
                 $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
@@ -359,7 +371,8 @@ start "" /b powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidde
             exit 1
         }
     }
-} else {
+}
+else {
     Write-Host "[UpdatePilot Agent] Loaded authenticated device token from DPAPI." -ForegroundColor Green
 }
 
@@ -421,7 +434,8 @@ function Invoke-SoftwareDiscovery() {
             }
             Write-Host "[SCAN] Found $($upgradesMap.Count) verified software updates via WinGet." -ForegroundColor Green
         }
-    } catch {
+    }
+    catch {
         Write-Host "[SCAN] Note: WinGet upgrade catalog check: $_" -ForegroundColor Yellow
     }
 
@@ -477,7 +491,8 @@ function Invoke-SoftwareDiscovery() {
                         $len = [Math]::Min($line.Length - $idxAvailable, $nextIdx - $idxAvailable)
                         $available = $line.Substring($idxAvailable, $len).Trim()
                     }
-                } else {
+                }
+                else {
                     $nextIdx = if ($idxSource -gt 0) { $idxSource } else { $line.Length }
                     if ($line.Length -gt $idxVersion) {
                         $len = [Math]::Min($line.Length - $idxVersion, $nextIdx - $idxVersion)
@@ -508,7 +523,8 @@ function Invoke-SoftwareDiscovery() {
             }
             Write-Host "[SCAN] Discovered $($discoveredApps.Count) applications via WinGet." -ForegroundColor Green
         }
-    } catch {
+    }
+    catch {
         Write-Host "[SCAN] WinGet query encountered an issue: $_" -ForegroundColor Yellow
     }
 
@@ -521,7 +537,7 @@ function Invoke-SoftwareDiscovery() {
             "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
         )
         $regApps = Get-ItemProperty $regPaths -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -and -not $_.SystemComponent -and $_.ParentKeyName -eq $null }
+        Where-Object { $_.DisplayName -and -not $_.SystemComponent -and $_.ParentKeyName -eq $null }
 
         foreach ($app in $regApps) {
             $discoveredApps += @{
@@ -558,13 +574,15 @@ while ($true) {
             } | ConvertTo-Json
             Invoke-RestMethod -Uri "$ServerUrl/agent/v1/heartbeat" -Method Post -Headers $headers -Body $hbBody | Out-Null
             $lastHeartbeat = $now
-        } catch {
+        }
+        catch {
             $respBody = $null
             if ($_.Exception.Response) {
                 try {
                     $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
                     $respBody = $reader.ReadToEnd()
-                } catch {}
+                }
+                catch {}
             }
             if ($respBody -match "DEVICE_CREDENTIAL_REVOKED" -or $_.Exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::Unauthorized) {
                 Write-Host "[AUTH] Device credentials have been revoked by the server." -ForegroundColor Red
@@ -582,7 +600,8 @@ while ($true) {
         $claimedJob = $null
         try {
             $claimedJob = Invoke-RestMethod -Uri "$ServerUrl/agent/v1/jobs/claim" -Method Post -Headers $headers
-        } catch {
+        }
+        catch {
             if ($_.Exception.Response.StatusCode -ne [System.Net.HttpStatusCode]::NoContent) {
                 throw $_
             }
@@ -595,6 +614,68 @@ while ($true) {
 
             if ($jobKind -eq "SCAN") {
                 $apps = Invoke-SoftwareDiscovery
+
+                # ── Deduplicate before submitting ──────────────────────────────
+                # Helper: Normalize application name by stripping architecture tags
+                function Get-NormalizedAppName([string]$name) {
+                    if ([string]::IsNullOrWhiteSpace($name)) { return "" }
+                    $clean = $name.Trim()
+                    $clean = [regex]::Replace($clean, '\s*\((?:64-bit(?:\s*x64)?|32-bit|x64|x86|arm64|user)\)\s*$', '', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                    return $clean.Trim().ToLower()
+                }
+
+                # Helper: Score application entry quality
+                function Get-AppQualityScore($app) {
+                    $score = 0
+                    if ($app.source -eq 'winget') { $score += 100 }
+                    if ($app.packageId -and $app.packageId -notmatch '^(MSIX|ARP)\\') { $score += 50 }
+                    if ($app.availableVersion -and $app.availableVersion.Trim() -ne "") { $score += 30 }
+                    if ($app.installedVersion -and $app.installedVersion -ne "unknown" -and $app.installedVersion -ne "1.0.0.0") { $score += 20 }
+                    return $score
+                }
+
+                # Pass 1: Deduplicate by exact package ID
+                $pkgMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $noPkgApps = @()
+                foreach ($app in $apps) {
+                    if ($app.packageId -and $app.packageId.Trim() -ne "") {
+                        $pKey = $app.packageId.Trim().ToLower()
+                        if ($pkgMap.ContainsKey($pKey)) {
+                            if ((Get-AppQualityScore $app) -gt (Get-AppQualityScore $pkgMap[$pKey])) {
+                                $pkgMap[$pKey] = $app
+                            }
+                        } else {
+                            $pkgMap[$pKey] = $app
+                        }
+                    } else {
+                        $noPkgApps += $app
+                    }
+                }
+
+                # Pass 2: Merge MSIX/ARP/Registry stubs into verified WinGet packages with same normalized name
+                $normMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($app in ($pkgMap.Values + $noPkgApps)) {
+                    $normKey = Get-NormalizedAppName $app.displayName
+                    if ($normMap.ContainsKey($normKey)) {
+                        $existing = $normMap[$normKey]
+                        $existingIsStub = (-not $existing.packageId) -or ($existing.packageId -match '^(MSIX|ARP)\\')
+                        $incomingIsStub = (-not $app.packageId) -or ($app.packageId -match '^(MSIX|ARP)\\')
+
+                        # If one is a stub and the other is a genuine package, merge into the genuine one
+                        if ($existingIsStub -and -not $incomingIsStub) {
+                            $normMap[$normKey] = $app
+                        } elseif (-not $existingIsStub -and $incomingIsStub) {
+                            # Keep existing genuine package
+                        } elseif ((Get-AppQualityScore $app) -gt (Get-AppQualityScore $existing)) {
+                            $normMap[$normKey] = $app
+                        }
+                    } else {
+                        $normMap[$normKey] = $app
+                    }
+                }
+
+                $apps = @($normMap.Values)
+                # ──────────────────────────────────────────────────────────────
 
                 $scanPayload = @{
                     applications = $apps
@@ -635,8 +716,8 @@ while ($true) {
 
                     # Parse WinGet download progress: "  20.0 MB /  197 MB"
                     if ($line -match '(\d+\.?\d*)\s+MB\s*/\s*(\d+\.?\d*)\s+MB') {
-                        $dlMB    = [double]$Matches[1]
-                        $totMB   = [double]$Matches[2]
+                        $dlMB = [double]$Matches[1]
+                        $totMB = [double]$Matches[2]
                         $nowTime = [DateTime]::Now
                         # Throttle: report at most every 2 seconds
                         if (($nowTime - $lastProgressReport).TotalSeconds -ge 2) {
@@ -645,7 +726,8 @@ while ($true) {
                                 Invoke-RestMethod -Uri "$ServerUrl/agent/v1/jobs/$jobId/progress" `
                                     -Method Patch -Headers $headers -Body $progressBody `
                                     -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
-                            } catch {}
+                            }
+                            catch {}
                             $lastProgressReport = $nowTime
                         }
                     }
@@ -669,7 +751,8 @@ while ($true) {
                             }
                         }
                     }
-                } catch {
+                }
+                catch {
                     Write-Host "[VERIFY] Verification lookup note: $_" -ForegroundColor Yellow
                 }
 
@@ -680,7 +763,8 @@ while ($true) {
                 if ($exitCode -ne 0 -and $exitCode -ne 3010) {
                     $verResult = "VERIFICATION_FAILED"
                     $safeDiag = "WinGet installer exited with error code $exitCode."
-                } elseif ($newVersion -and $targetVer -and $newVersion -ne $targetVer) {
+                }
+                elseif ($newVersion -and $targetVer -and $newVersion -ne $targetVer) {
                     Write-Host "[VERIFY] Note: Installed version is '$newVersion', target was '$targetVer'" -ForegroundColor Yellow
                     $safeDiag = "Installed version is now $newVersion (target: $targetVer)."
                 }
@@ -703,13 +787,15 @@ while ($true) {
                 if ($RunOnce) { break }
             }
         }
-    } catch {
+    }
+    catch {
         $errMsg = $_.Exception.Message
         if ($_.Exception.Response) {
             try {
                 $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
                 $errMsg = $reader.ReadToEnd()
-            } catch {}
+            }
+            catch {}
         }
         Write-Host "[AGENT ERROR] $errMsg" -ForegroundColor Red
     }

@@ -26,27 +26,27 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   const fillPercent = hasMB
     ? Math.min(100, Math.round((downloadedMB! / totalMB!) * 100))
     : isSucceeded
-    ? 100
-    : isFailed
-    ? 100
-    : status === 'VERIFYING'
-    ? 94
-    : status === 'RUNNING'
-    ? 45
-    : 10; // QUEUED
+      ? 100
+      : isFailed
+        ? 100
+        : status === 'VERIFYING'
+          ? 94
+          : status === 'RUNNING'
+            ? 45
+            : 10; // QUEUED
 
   // Right-side label: MB display when available, otherwise status text
   const mbBadge = isSucceeded
     ? 'Done'
     : isFailed
-    ? 'Error'
-    : hasMB
-    ? `${downloadedMB!.toFixed(1)} MB / ${totalMB!.toFixed(0)} MB`
-    : status === 'VERIFYING'
-    ? 'Verifying...'
-    : status === 'RUNNING'
-    ? 'Downloading...'
-    : 'Waiting...';
+      ? 'Error'
+      : hasMB
+        ? `${downloadedMB!.toFixed(1)} MB / ${totalMB!.toFixed(0)} MB`
+        : status === 'VERIFYING'
+          ? 'Verifying...'
+          : status === 'RUNNING'
+            ? 'Downloading...'
+            : 'Waiting...';
 
   // Stage label for the left side
   const resolvedLabel =
@@ -54,14 +54,14 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
     (isSucceeded
       ? 'Installation verified and complete!'
       : isFailed
-      ? 'Installation encountered an error'
-      : status === 'VERIFYING'
-      ? 'Verifying installed version via WinGet...'
-      : status === 'RUNNING'
-      ? hasMB
-        ? 'Downloading package installer...'
-        : 'Connecting to agent & starting WinGet...'
-      : 'Waiting for Windows agent to claim job...');
+        ? 'Installation encountered an error'
+        : status === 'VERIFYING'
+          ? 'Verifying installed version via WinGet...'
+          : status === 'RUNNING'
+            ? hasMB
+              ? 'Downloading package installer...'
+              : 'Connecting to agent & starting WinGet...'
+            : 'Waiting for Windows agent to claim job...');
 
   return (
     <div className={`w-full space-y-2.5 ${className}`}>
@@ -82,15 +82,14 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
 
         {/* MB badge — this replaces the old "0%" */}
         <span
-          className={`font-mono font-bold text-xs px-2 py-0.5 rounded-md whitespace-nowrap ${
-            isSucceeded
-              ? 'bg-emerald-100 text-emerald-800'
-              : isFailed
+          className={`font-mono font-bold text-xs px-2 py-0.5 rounded-md whitespace-nowrap ${isSucceeded
+            ? 'bg-emerald-100 text-emerald-800'
+            : isFailed
               ? 'bg-rose-100 text-rose-800'
               : hasMB
-              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-              : 'bg-slate-100 text-slate-500 border border-slate-200'
-          }`}
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : 'bg-slate-100 text-slate-500 border border-slate-200'
+            }`}
         >
           {mbBadge}
         </span>
@@ -99,13 +98,12 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
       {/* Chrome-style green progress bar */}
       <div className="w-full bg-slate-100 rounded-full h-3.5 p-0.5 border border-slate-200/90 shadow-inner overflow-hidden relative">
         <div
-          className={`h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden ${
-            isFailed
-              ? 'bg-rose-500'
-              : isSucceeded
+          className={`h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden ${isFailed
+            ? 'bg-rose-500'
+            : isSucceeded
               ? 'bg-emerald-500'
               : 'bg-emerald-500 shadow-sm'
-          }`}
+            }`}
           style={{ width: `${fillPercent}%` }}
         >
           {/* Animated sheen when active */}

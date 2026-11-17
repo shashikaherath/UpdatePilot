@@ -208,6 +208,7 @@ model Application {
   snapshots         ApplicationSnapshot[]
   updateCandidates  UpdateCandidate[]
 
+  @@unique([deviceId, displayName])
   @@index([deviceId])
   @@index([packageIdentityId])
   @@index([matchStatus])

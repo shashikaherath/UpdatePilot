@@ -12,9 +12,11 @@ import {
   ArrowRight,
   CheckCircle2,
   AlertTriangle,
+  Laptop,
 } from 'lucide-react';
 import { applicationService, ListApplicationsParams } from '../services/applicationService';
 import { updateService } from '../services/updateService';
+import { deviceService } from '../services/deviceService';
 import {
   Application,
   ApplicationDetail,
@@ -22,6 +24,7 @@ import {
   PaginationMeta,
   UpdatePreviewResponse,
   JobDetail,
+  Device,
 } from '../types/api';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
@@ -40,9 +43,11 @@ export const ApplicationsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  // Filters
+  // Filters & Device Selection
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<MatchStatus | ''>('');
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<string>('all');
   const [page, setPage] = useState(1);
 
   // Detail Modal
@@ -59,6 +64,10 @@ export const ApplicationsPage: React.FC = () => {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    deviceService.listDevices().then(setDevices).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
@@ -73,6 +82,7 @@ export const ApplicationsPage: React.FC = () => {
         pageSize: 15,
         q: searchTerm.trim() || undefined,
         status: statusFilter || undefined,
+        deviceId: selectedDevice !== 'all' ? selectedDevice : undefined,
       };
       const response = await applicationService.listApplications(params);
       setApplications(response.data);
@@ -82,7 +92,7 @@ export const ApplicationsPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [page, searchTerm, statusFilter]);
+  }, [page, searchTerm, statusFilter, selectedDevice]);
 
   useEffect(() => {
     void fetchApps();
@@ -212,13 +222,12 @@ export const ApplicationsPage: React.FC = () => {
       {/* Action Notification Banner */}
       {actionMessage && (
         <div
-          className={`p-3.5 rounded-xl border text-sm flex items-center justify-between transition-all ${
-            actionMessage.type === 'success'
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-              : actionMessage.type === 'info'
+          className={`p-3.5 rounded-xl border text-sm flex items-center justify-between transition-all ${actionMessage.type === 'success'
+            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+            : actionMessage.type === 'info'
               ? 'bg-sky-50 text-sky-800 border-sky-200'
               : 'bg-rose-50 text-rose-800 border-rose-200'
-          }`}
+            }`}
         >
           <div className="flex items-center gap-2">
             {actionMessage.type === 'success' ? (
@@ -251,6 +260,27 @@ export const ApplicationsPage: React.FC = () => {
         </form>
 
         <div className="flex items-center gap-2">
+          {devices.length > 1 && (
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-xs shadow-sm">
+              <Laptop className="w-3.5 h-3.5 text-slate-400" />
+              <select
+                value={selectedDevice}
+                onChange={(e) => {
+                  setSelectedDevice(e.target.value);
+                  setPage(1);
+                }}
+                className="bg-transparent text-slate-700 font-medium focus:outline-none"
+              >
+                <option value="all">All Devices ({devices.length})</option>
+                {devices.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.deviceName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-xs shadow-sm">
             <Filter className="w-3.5 h-3.5 text-slate-400" />
             <select
@@ -315,11 +345,18 @@ export const ApplicationsPage: React.FC = () => {
                           <span className="font-semibold text-slate-900 block truncate max-w-[200px] sm:max-w-[300px]">
                             {app.displayName}
                           </span>
-                          {(app.packageId || app.packageIdentity?.packageId) && (
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              {app.packageId || app.packageIdentity?.packageId}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {(app.packageId || app.packageIdentity?.packageId) && (
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {app.packageId || app.packageIdentity?.packageId}
+                              </span>
+                            )}
+                            {app.deviceName && devices.length > 1 && (
+                              <span className="text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.2 rounded font-sans">
+                                {app.deviceName}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -551,8 +588,8 @@ export const ApplicationsPage: React.FC = () => {
                     {jobStatus.status === 'SUCCEEDED'
                       ? 'Upgrade Succeeded & Verified!'
                       : ['FAILED', 'VERIFICATION_FAILED'].includes(jobStatus.status)
-                      ? 'Update Execution Failed'
-                      : 'Windows Agent Upgrading Software...'}
+                        ? 'Update Execution Failed'
+                        : 'Windows Agent Upgrading Software...'}
                   </h4>
                   <p className="text-xs text-slate-500 mt-1">
                     {jobStatus.status === 'SUCCEEDED'

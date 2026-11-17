@@ -10,6 +10,24 @@ import {
   AgentJobResultInput,
 } from './schemas.js';
 
+function normalizeAppName(name: string): string {
+  if (!name) return '';
+  return name
+    .trim()
+    .replace(/\s*\((?:64-bit(?:\s*x64)?|32-bit|x64|x86|arm64|user)\)\s*$/i, '')
+    .trim()
+    .toLowerCase();
+}
+
+function getAppQualityScore(app: { packageId?: string | null; source?: string | null; installedVersion?: string; availableVersion?: string | null }): number {
+  let score = 0;
+  if (app.source === 'winget') score += 100;
+  if (app.packageId && !/^(MSIX|ARP)\\/.test(app.packageId)) score += 50;
+  if (app.availableVersion?.trim()) score += 30;
+  if (app.installedVersion && app.installedVersion !== 'unknown' && app.installedVersion !== '1.0.0.0') score += 20;
+  return score;
+}
+
 export class AgentService {
   async pairDevice(input: AgentPairInput) {
     const codeHash = sha256(input.pairingCode);
@@ -215,22 +233,118 @@ export class AgentService {
 
     const { applications } = input;
 
+    // ── Server-side dedup of incoming payload (before try block so count is in scope)
+    // Pass 1: Deduplicate by exact package ID
+    const pkgDedup = new Map<string, typeof applications[0]>();
+    const noPkgApps: typeof applications[0][] = [];
+    for (const item of applications) {
+      if (item.packageId?.trim()) {
+        const pKey = item.packageId.trim().toLowerCase();
+        const existing = pkgDedup.get(pKey);
+        if (!existing || getAppQualityScore(item) > getAppQualityScore(existing)) {
+          pkgDedup.set(pKey, item);
+        }
+      } else {
+        noPkgApps.push(item);
+      }
+    }
+
+    // Pass 2: Merge MSIX/ARP/Registry stubs into verified WinGet packages with same normalized name
+    const normMap = new Map<string, typeof applications[0]>();
+    for (const item of [...pkgDedup.values(), ...noPkgApps]) {
+      const normKey = normalizeAppName(item.displayName);
+      const existing = normMap.get(normKey);
+      if (!existing) {
+        normMap.set(normKey, item);
+      } else {
+        const existingIsStub = !existing.packageId || /^(MSIX|ARP)\\/i.test(existing.packageId);
+        const incomingIsStub = !item.packageId || /^(MSIX|ARP)\\/i.test(item.packageId);
+        if (existingIsStub && !incomingIsStub) {
+          normMap.set(normKey, item);
+        } else if (!existingIsStub && incomingIsStub) {
+          // Keep existing genuine package
+        } else if (getAppQualityScore(item) > getAppQualityScore(existing)) {
+          normMap.set(normKey, item);
+        }
+      }
+    }
+    const dedupedApplications = Array.from(normMap.values());
+    const finalCount = dedupedApplications.length;
+
     try {
       let matchedCount = 0;
 
-      // 1. Bulk pre-fetch existing Application records for this device
+      // ── Step 2: Bulk pre-fetch existing Application records for this device ─
+      // Build lookup maps:
+      //   pkgIdentityIdToApp — keyed by packageIdentityId (most reliable)
+      //   nameToApp          — keyed by raw displayName AND normalized displayName
       const existingApps = await prisma.application.findMany({
         where: { deviceId },
+        include: { packageIdentity: { select: { packageId: true } } },
+        orderBy: { updatedAt: 'desc' }, // most recently updated first
       });
-      const appMap = new Map<string, typeof existingApps[0]>();
+
+      // Elect canonical record per normalized display name; collect zombie ids
+      const nameToApp = new Map<string, typeof existingApps[0]>();
+      const zombieIds: string[] = [];
       for (const app of existingApps) {
-        appMap.set(app.displayName.toLowerCase().trim(), app);
+        const exactKey = app.displayName.trim().toLowerCase();
+        const normKey = normalizeAppName(app.displayName);
+
+        if (!nameToApp.has(normKey)) {
+          nameToApp.set(normKey, app);
+          nameToApp.set(exactKey, app);
+        } else {
+          // If existing is an MSIX stub and current is genuine, replace canonical
+          const existing = nameToApp.get(normKey)!;
+          const existingIsStub = !existing.packageIdentity?.packageId || /^(MSIX|ARP)\\/i.test(existing.packageIdentity.packageId);
+          const currentIsStub = !app.packageIdentity?.packageId || /^(MSIX|ARP)\\/i.test(app.packageIdentity.packageId);
+
+          if (existingIsStub && !currentIsStub) {
+            zombieIds.push(existing.id);
+            nameToApp.set(normKey, app);
+            nameToApp.set(exactKey, app);
+          } else {
+            zombieIds.push(app.id);
+          }
+        }
       }
 
-      // 2. Bulk pre-fetch existing PackageIdentity records for all incoming packageIds
+      // Also key by packageIdentityId for fast lookup when packageId available
+      const pkgIdentityIdToApp = new Map<string, typeof existingApps[0]>();
+      for (const app of existingApps) {
+        if (app.packageIdentityId && !pkgIdentityIdToApp.has(app.packageIdentityId)) {
+          pkgIdentityIdToApp.set(app.packageIdentityId, app);
+        }
+      }
+
+      // ── Step 3: Safe cleanup of zombie duplicate rows ───────────────────────
+      // We must reassign related rows before deleting zombies to avoid FK errors.
+      if (zombieIds.length > 0) {
+        for (const zombieId of zombieIds) {
+          const zombieApp = existingApps.find((a) => a.id === zombieId)!;
+          const nk = zombieApp.displayName.trim().toLowerCase();
+          const canonicalApp = nameToApp.get(nk)!;
+
+          // Move snapshots and updateCandidates to the canonical record
+          await prisma.applicationSnapshot.updateMany({
+            where: { applicationId: zombieId },
+            data: { applicationId: canonicalApp.id },
+          });
+          await prisma.updateCandidate.updateMany({
+            where: { applicationId: zombieId },
+            data: { applicationId: canonicalApp.id },
+          });
+          // Now safe to delete
+          await prisma.application.delete({ where: { id: zombieId } });
+        }
+        console.log(`[SCAN_DEDUP] Cleaned up ${zombieIds.length} duplicate application record(s) for device ${deviceId}`);
+      }
+
+      // ── Step 4: Bulk pre-fetch / upsert PackageIdentity records ────────────
       const rawPackageIds = Array.from(
         new Set(
-          applications
+          dedupedApplications
             .map((a) => a.packageId?.trim())
             .filter((id): id is string => Boolean(id))
         )
@@ -238,11 +352,11 @@ export class AgentService {
 
       const existingPkgIdentities = rawPackageIds.length > 0
         ? await prisma.packageIdentity.findMany({
-            where: {
-              packageId: { in: rawPackageIds, mode: 'insensitive' },
-              source: 'winget',
-            },
-          })
+          where: {
+            packageId: { in: rawPackageIds, mode: 'insensitive' },
+            source: 'winget',
+          },
+        })
         : [];
 
       const pkgMap = new Map<string, typeof existingPkgIdentities[0]>();
@@ -260,8 +374,8 @@ export class AgentService {
         source: string | null;
       }> = [];
 
-      // 3. Process each application with in-memory lookups & pooled direct operations
-      for (const item of applications) {
+      // ── Step 5: Process each deduplicated application ───────────────────────
+      for (const item of dedupedApplications) {
         let packageIdentity = null;
         let matchStatus: MatchStatus = MatchStatus.UNKNOWN;
 
@@ -270,11 +384,16 @@ export class AgentService {
           packageIdentity = pkgMap.get(lowerPkgId) || null;
 
           if (!packageIdentity && (item.source === 'winget' || !item.source)) {
-            packageIdentity = await prisma.packageIdentity.create({
-              data: {
+            // Use upsert to avoid race-condition duplicate PackageIdentity rows
+            packageIdentity = await prisma.packageIdentity.upsert({
+              where: { packageId_source: { packageId: item.packageId.trim(), source: item.source || 'winget' } },
+              create: {
                 packageId: item.packageId.trim(),
                 source: item.source || 'winget',
                 publisher: item.publisher || null,
+              },
+              update: {
+                publisher: item.publisher || undefined,
               },
             });
             pkgMap.set(lowerPkgId, packageIdentity);
@@ -288,9 +407,13 @@ export class AgentService {
           }
         }
 
-        // Upsert Application on this device using pre-fetched map
-        const appKey = item.displayName.toLowerCase().trim();
-        const existingApp = appMap.get(appKey);
+        // Find canonical app record: prefer packageIdentityId match, then exact name, then normalized name
+        const nameKey = item.displayName.trim().toLowerCase();
+        const normKey = normalizeAppName(item.displayName);
+        let existingApp = (packageIdentity && pkgIdentityIdToApp.get(packageIdentity.id)) ||
+                          nameToApp.get(nameKey) ||
+                          nameToApp.get(normKey) ||
+                          null;
 
         let appRecord;
         if (existingApp) {
@@ -305,12 +428,15 @@ export class AgentService {
               lastSeenAt: new Date(),
             },
           });
-          appMap.set(appKey, appRecord);
+          // Keep maps in sync so subsequent items in this scan find the right record
+          nameToApp.set(nameKey, appRecord as any);
+          nameToApp.set(normKey, appRecord as any);
+          if (packageIdentity) pkgIdentityIdToApp.set(packageIdentity.id, appRecord as any);
         } else {
           appRecord = await prisma.application.create({
             data: {
               deviceId,
-              displayName: item.displayName,
+              displayName: item.displayName.trim(),
               publisher: item.publisher,
               installedVersion: item.installedVersion,
               source: item.source || 'unknown',
@@ -318,7 +444,9 @@ export class AgentService {
               matchStatus,
             },
           });
-          appMap.set(appKey, appRecord);
+          nameToApp.set(nameKey, appRecord as any);
+          nameToApp.set(normKey, appRecord as any);
+          if (packageIdentity) pkgIdentityIdToApp.set(packageIdentity.id, appRecord as any);
         }
 
         // Collect ApplicationSnapshot for batch insertion
@@ -391,7 +519,7 @@ export class AgentService {
         }
       }
 
-      // 4. Batch insert all snapshots in chunks (vastly faster than individual queries)
+      // ── Step 6: Batch insert all snapshots ──────────────────────────────────
       if (snapshots.length > 0) {
         for (let i = 0; i < snapshots.length; i += 100) {
           const chunk = snapshots.slice(i, i + 100);
@@ -416,8 +544,8 @@ export class AgentService {
       await prisma.scanJob.update({
         where: { id: job.scanJob!.id },
         data: {
-          scannedCount: applications.length,
-          foundCount: applications.length,
+          scannedCount: dedupedApplications.length,
+          foundCount: dedupedApplications.length,
         },
       });
 
@@ -431,7 +559,7 @@ export class AgentService {
           targetType: 'ScanJob',
           targetId: job.scanJob!.id,
           safeMetadata: {
-            scannedCount: applications.length,
+            scannedCount: dedupedApplications.length,
             matchedCount,
           },
         },
@@ -452,8 +580,8 @@ export class AgentService {
 
     return {
       status: 'received',
-      scannedCount: applications.length,
-      foundCount: applications.length,
+      scannedCount: finalCount,
+      foundCount: finalCount,
     };
   }
 
@@ -521,8 +649,8 @@ export class AgentService {
             finalStatus === JobStatus.FAILED
               ? `Update failed with exit code ${input.exitCode}`
               : finalStatus === JobStatus.VERIFICATION_FAILED
-              ? 'Post-update version verification failed.'
-              : null,
+                ? 'Post-update version verification failed.'
+                : null,
         },
       });
 

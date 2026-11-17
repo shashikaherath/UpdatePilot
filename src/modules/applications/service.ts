@@ -1,16 +1,17 @@
 import { prisma } from '../../config/prisma.js';
 import { NotFoundError } from '../../utils/errors.js';
-import { Prisma } from '@prisma/client';
+import { Prisma, DeviceStatus } from '@prisma/client';
 import { ListApplicationsQuery } from './schemas.js';
 
 export class ApplicationService {
   async listApplications(userId: string, query: ListApplicationsQuery) {
     const { q, deviceId, status, source, sort, order, page, pageSize } = query;
 
-    // Filter by user's owned devices
+    // Filter by user's owned devices (exclude revoked devices)
     const where: Prisma.ApplicationWhereInput = {
       device: {
         ownerUserId: userId,
+        status: { not: DeviceStatus.REVOKED },
       },
     };
 
@@ -84,13 +85,25 @@ export class ApplicationService {
       lastSeenAt: app.lastSeenAt,
     }));
 
+    // Safety-net dedup: in case zombie rows still exist in DB, only send one entry
+    // per (deviceId, displayName) pair — the one with the most recent lastSeenAt.
+    const seen = new Map<string, (typeof data)[0]>();
+    for (const item of data) {
+      const key = `${item.deviceId}:${item.displayName.trim().toLowerCase()}`;
+      const prev = seen.get(key);
+      if (!prev || (item.lastSeenAt && (!prev.lastSeenAt || item.lastSeenAt > prev.lastSeenAt))) {
+        seen.set(key, item);
+      }
+    }
+    const dedupedData = Array.from(seen.values());
+
     return {
-      data,
+      data: dedupedData,
       meta: {
         page,
         pageSize,
-        total,
-        totalPages: Math.ceil(total / pageSize),
+        total: dedupedData.length < total ? dedupedData.length : total,
+        totalPages: Math.ceil((dedupedData.length < total ? dedupedData.length : total) / pageSize),
       },
     };
   }
@@ -101,6 +114,7 @@ export class ApplicationService {
         id,
         device: {
           ownerUserId: userId,
+          status: { not: DeviceStatus.REVOKED },
         },
       },
       include: {

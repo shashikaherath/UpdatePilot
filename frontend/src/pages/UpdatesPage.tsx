@@ -411,9 +411,8 @@ export const UpdatesPage: React.FC = () => {
               return (
                 <Card
                   key={item.id}
-                  className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 transition-colors ${
-                    isSelected ? 'border-indigo-400 bg-indigo-50/20' : 'hover:border-indigo-200'
-                  }`}
+                  className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 transition-colors ${isSelected ? 'border-indigo-400 bg-indigo-50/20' : 'hover:border-indigo-200'
+                    }`}
                 >
                   <div className="flex items-start gap-3 min-w-0">
                     {/* Checkbox */}
@@ -610,10 +609,10 @@ export const UpdatesPage: React.FC = () => {
                     {jobStatus?.status === 'SUCCEEDED'
                       ? 'Update Installed and Verified!'
                       : jobStatus?.status === 'FAILED'
-                      ? 'Installation Failed'
-                      : jobStatus?.status === 'VERIFICATION_FAILED'
-                      ? 'Post-Install Verification Failed'
-                      : 'Windows Agent Executing Update...'}
+                        ? 'Installation Failed'
+                        : jobStatus?.status === 'VERIFICATION_FAILED'
+                          ? 'Post-Install Verification Failed'
+                          : 'Windows Agent Executing Update...'}
                   </h4>
 
                   <div className="mt-2 flex justify-center">
@@ -638,7 +637,7 @@ export const UpdatesPage: React.FC = () => {
                     {jobStatus?.status === 'SUCCEEDED'
                       ? `Application has been updated to version ${previewData.targetVersion} and verified on your PC.`
                       : jobStatus?.errorSummary ||
-                        'The Windows agent has claimed this update job and is running the WinGet package installer.'}
+                      'The Windows agent has claimed this update job and is running the WinGet package installer.'}
                   </p>
                 </div>
 

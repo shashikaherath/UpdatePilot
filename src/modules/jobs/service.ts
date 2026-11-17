@@ -45,23 +45,23 @@ export class JobService {
       totalMB: job.totalMB ?? null,
       scanDetails: job.scanJob
         ? {
-            scanId: job.scanJob.id,
-            scanMode: job.scanJob.scanMode,
-            scannedCount: job.scanJob.scannedCount,
-            foundCount: job.scanJob.foundCount,
-          }
+          scanId: job.scanJob.id,
+          scanMode: job.scanJob.scanMode,
+          scannedCount: job.scanJob.scannedCount,
+          foundCount: job.scanJob.foundCount,
+        }
         : null,
       updateDetails: job.updateJob
         ? {
-            targetVersion: job.updateJob.targetVersion,
-            exitCode: job.updateJob.exitCode,
-            restartRequired: job.updateJob.restartRequired,
-            verifiedInstalledVersion: job.updateJob.verifiedInstalledVersion,
-            verificationResult: job.updateJob.verificationResult,
-            safeDiagnostics: job.updateJob.safeDiagnostics,
-            applicationName: job.updateJob.updateCandidate?.application.displayName || null,
-            packageId: job.updateJob.updateCandidate?.packageIdentity.packageId || null,
-          }
+          targetVersion: job.updateJob.targetVersion,
+          exitCode: job.updateJob.exitCode,
+          restartRequired: job.updateJob.restartRequired,
+          verifiedInstalledVersion: job.updateJob.verifiedInstalledVersion,
+          verificationResult: job.updateJob.verificationResult,
+          safeDiagnostics: job.updateJob.safeDiagnostics,
+          applicationName: job.updateJob.updateCandidate?.application.displayName || null,
+          packageId: job.updateJob.updateCandidate?.packageIdentity.packageId || null,
+        }
         : null,
     };
   }
