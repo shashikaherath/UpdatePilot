@@ -31,6 +31,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorMessage } from '../components/ui/ErrorMessage';
 import { getApiErrorMessage } from '../lib/api';
 import { sendBrowserNotification } from '../utils/notifications';
+import { ProgressBar } from '../components/ui/ProgressBar';
 
 export const ApplicationsPage: React.FC = () => {
   const [applications, setApplications] = useState<Application[]>([]);
@@ -55,7 +56,34 @@ export const ApplicationsPage: React.FC = () => {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [executeLoading, setExecuteLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobDetail | null>(null);
+  const [progressPercent, setProgressPercent] = useState<number>(0);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!jobStatus) {
+      setProgressPercent(0);
+      return;
+    }
+
+    if (jobStatus.status === 'QUEUED') {
+      setProgressPercent((prev) => (prev < 20 ? 15 : prev));
+    } else if (jobStatus.status === 'RUNNING') {
+      setProgressPercent((prev) => (prev < 30 ? 30 : prev));
+      const interval = setInterval(() => {
+        setProgressPercent((prev) => {
+          if (prev < 50) return prev + 4;
+          if (prev < 75) return prev + 2;
+          if (prev < 88) return prev + 1;
+          return prev;
+        });
+      }, 800);
+      return () => clearInterval(interval);
+    } else if (jobStatus.status === 'VERIFYING') {
+      setProgressPercent(94);
+    } else if (jobStatus.status === 'SUCCEEDED') {
+      setProgressPercent(100);
+    }
+  }, [jobStatus?.status]);
 
   useEffect(() => {
     return () => {
@@ -185,6 +213,7 @@ export const ApplicationsPage: React.FC = () => {
     setUpdatingApp(null);
     setPreviewData(null);
     setJobStatus(null);
+    setProgressPercent(0);
   };
 
   return (
@@ -558,6 +587,15 @@ export const ApplicationsPage: React.FC = () => {
                       ? `Successfully updated ${updatingApp.displayName} to version ${previewData.targetVersion}.`
                       : jobStatus.errorSummary || 'The agent is executing the verified WinGet installer locally.'}
                   </p>
+                </div>
+
+                {/* Chrome-Style Filling Green Download Progress Bar */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/90 text-left max-w-sm mx-auto shadow-sm">
+                  <ProgressBar
+                    progress={progressPercent}
+                    status={jobStatus.status}
+                    detailLabel={`${updatingApp.displayName} • Target v${previewData.targetVersion}`}
+                  />
                 </div>
 
                 {['SUCCEEDED', 'FAILED', 'VERIFICATION_FAILED', 'CANCELLED'].includes(jobStatus.status) && (
