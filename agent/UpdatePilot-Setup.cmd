@@ -5,5 +5,5 @@ REM Launches the native GUI consent and pairing screen
 REM =========================================================================
 
 cd /d "%~dp0"
-powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "UpdatePilotAgent.ps1" -GUI %*
+powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "UpdatePilotAgent.ps1" -ResetCredentials -GUI %*
 

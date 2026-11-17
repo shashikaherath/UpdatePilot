@@ -59,16 +59,16 @@ setlocal EnableDelayedExpansion
 set "AGENT_DIR=%LocalAppData%\\UpdatePilot"
 if not exist "%AGENT_DIR%" mkdir "%AGENT_DIR%"
 
-REM If UpdatePilotAgent.ps1 exists alongside this script, use it; otherwise download it
+REM If UpdatePilotAgent.ps1 exists alongside this script, use it; otherwise download the latest script
 if exist "%~dp0UpdatePilotAgent.ps1" (
     copy /y "%~dp0UpdatePilotAgent.ps1" "%AGENT_DIR%\\UpdatePilotAgent.ps1" >nul 2>&1
-) else if not exist "%AGENT_DIR%\\UpdatePilotAgent.ps1" (
-    echo [UpdatePilot] Downloading agent from server...
-    powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('${currentServerUrl}/agent/v1/download/script', '%AGENT_DIR%\\UpdatePilotAgent.ps1')"
+) else (
+    echo [UpdatePilot] Ensuring latest agent from server...
+    powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { (New-Object Net.WebClient).DownloadFile('${currentServerUrl}/agent/v1/download/script', '%AGENT_DIR%\\UpdatePilotAgent.ps1') } catch {}"
 )
 
 cd /d "%AGENT_DIR%"
-powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilotAgent.ps1" -GUI -ServerUrl "${currentServerUrl}" -PairingCode "${pairingData.pairingCode}"
+powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilotAgent.ps1" -ResetCredentials -GUI -ServerUrl "${currentServerUrl}" -PairingCode "${pairingData.pairingCode}"
 `;
     const blob = new Blob([scriptContent], { type: 'application/cmd' });
     const url = URL.createObjectURL(blob);
@@ -653,7 +653,7 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilo
                       Run this in PowerShell from your project directory:
                     </p>
                     <div className="text-emerald-400 font-mono text-[11px] break-all select-all">
-                      powershell -ExecutionPolicy Bypass -File .\agent\UpdatePilotAgent.ps1 -ServerUrl &quot;{(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '')}&quot; -PairingCode &quot;{pairingData.pairingCode}&quot;
+                      powershell -ExecutionPolicy Bypass -File .\agent\UpdatePilotAgent.ps1 -ResetCredentials -ServerUrl &quot;{(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '')}&quot; -PairingCode &quot;{pairingData.pairingCode}&quot;
                     </div>
                     <Button
                       type="button"
@@ -663,7 +663,7 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%AGENT_DIR%\\UpdatePilo
                       onClick={() => {
                         const rawBase = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001').replace(/\/+$/, '');
                         const serverUrl = rawBase.endsWith('/api/v1') ? rawBase.slice(0, -7) : rawBase;
-                        copyToClipboard(`powershell -ExecutionPolicy Bypass -File .\\agent\\UpdatePilotAgent.ps1 -ServerUrl "${serverUrl}" -PairingCode "${pairingData.pairingCode}"`);
+                        copyToClipboard(`powershell -ExecutionPolicy Bypass -File .\\agent\\UpdatePilotAgent.ps1 -ResetCredentials -ServerUrl "${serverUrl}" -PairingCode "${pairingData.pairingCode}"`);
                       }}
                       icon={<Copy className="w-3.5 h-3.5" />}
                     >

@@ -235,7 +235,13 @@ function Show-PairingConsentDialog([ref]$codeRef, [ref]$serverRef) {
 }
 
 # 1. Establish Authentication / Pairing
-$deviceToken = Get-SecureToken
+# If a PairingCode is explicitly provided or ResetCredentials is set, treat this as a fresh pairing attempt
+if (-not [string]::IsNullOrWhiteSpace($PairingCode) -or $ResetCredentials) {
+    if (Test-Path $tokenFile) { Remove-Item $tokenFile -Force }
+    $deviceToken = $null
+} else {
+    $deviceToken = Get-SecureToken
+}
 
 if ([string]::IsNullOrWhiteSpace($deviceToken)) {
     if ($AutoEnroll) {
@@ -553,6 +559,20 @@ while ($true) {
             Invoke-RestMethod -Uri "$ServerUrl/agent/v1/heartbeat" -Method Post -Headers $headers -Body $hbBody | Out-Null
             $lastHeartbeat = $now
         } catch {
+            $respBody = $null
+            if ($_.Exception.Response) {
+                try {
+                    $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                    $respBody = $reader.ReadToEnd()
+                } catch {}
+            }
+            if ($respBody -match "DEVICE_CREDENTIAL_REVOKED" -or $_.Exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::Unauthorized) {
+                Write-Host "[AUTH] Device credentials have been revoked by the server." -ForegroundColor Red
+                if (Test-Path $tokenFile) { Remove-Item $tokenFile -Force }
+                if (Test-Path $metaFile) { Remove-Item $metaFile -Force }
+                Write-Host "[AUTH] Stored credentials cleared. Please run the 1-Click Setup again to re-pair this PC." -ForegroundColor Yellow
+                exit 1
+            }
             Write-Host "[HEARTBEAT] Warning: Could not reach backend server at $ServerUrl" -ForegroundColor Yellow
         }
     }
