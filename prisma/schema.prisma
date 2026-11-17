@@ -160,6 +160,8 @@ model Job {
   startedAt         DateTime?    @map("started_at")
   completedAt       DateTime?    @map("completed_at")
   errorSummary      String?      @map("error_summary")
+  downloadedMB      Float?       @map("downloaded_mb")
+  totalMB           Float?       @map("total_mb")
   createdAt         DateTime     @default(now()) @map("created_at")
   updatedAt         DateTime     @updatedAt @map("updated_at")
 

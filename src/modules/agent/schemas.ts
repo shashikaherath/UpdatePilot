@@ -37,7 +37,13 @@ export const agentJobIdParamSchema = z.object({
   id: z.string().uuid('Invalid job ID format'),
 });
 
+export const agentJobProgressSchema = z.object({
+  downloadedMB: z.number().nonnegative(),
+  totalMB: z.number().nonnegative(),
+});
+
 export type AgentPairInput = z.infer<typeof agentPairSchema>;
 export type AgentHeartbeatInput = z.infer<typeof agentHeartbeatSchema>;
 export type AgentScanResultsInput = z.infer<typeof agentScanResultsSchema>;
 export type AgentJobResultInput = z.infer<typeof agentJobResultSchema>;
+export type AgentJobProgressInput = z.infer<typeof agentJobProgressSchema>;

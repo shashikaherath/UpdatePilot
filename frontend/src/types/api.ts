@@ -151,6 +151,8 @@ export interface JobDetail {
   completedAt: string | null;
   errorSummary: string | null;
   createdAt: string;
+  downloadedMB: number | null;
+  totalMB: number | null;
   device: {
     deviceName: string;
   };

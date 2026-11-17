@@ -8,6 +8,7 @@ import {
   agentScanResultsSchema,
   agentJobResultSchema,
   agentJobIdParamSchema,
+  agentJobProgressSchema,
 } from './schemas.js';
 import { pairingRateLimiter } from '../../middleware/rateLimiter.js';
 
@@ -54,6 +55,12 @@ router.post(
   '/jobs/:id/heartbeat',
   validate({ params: agentJobIdParamSchema }),
   agentController.renewJobLease
+);
+
+router.patch(
+  '/jobs/:id/progress',
+  validate({ params: agentJobIdParamSchema, body: agentJobProgressSchema }),
+  agentController.reportJobProgress
 );
 
 export default router;

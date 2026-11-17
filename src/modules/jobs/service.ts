@@ -36,10 +36,13 @@ export class JobService {
       deviceName: job.device.deviceName,
       kind: job.kind,
       state: job.status.toLowerCase(),
+      status: job.status,
       startedAt: job.startedAt?.toISOString() || null,
       completedAt: job.completedAt?.toISOString() || null,
       createdAt: job.createdAt.toISOString(),
       errorSummary: job.errorSummary,
+      downloadedMB: job.downloadedMB ?? null,
+      totalMB: job.totalMB ?? null,
       scanDetails: job.scanJob
         ? {
             scanId: job.scanJob.id,

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     UpdatePilot Windows Agent - Official Local Worker Service
 .DESCRIPTION
@@ -617,7 +617,40 @@ while ($true) {
                     $upgradeArgs = "upgrade --id `"$pkgId`" --exact --version `"$targetVer`" --accept-package-agreements --accept-source-agreements --disable-interactivity"
                 }
 
-                $process = Start-Process -FilePath "winget.exe" -ArgumentList $upgradeArgs -Wait -PassThru -NoNewWindow
+                # Stream WinGet output so we can capture MB progress lines (e.g. "20.0 MB /  180 MB")
+                $psi = New-Object System.Diagnostics.ProcessStartInfo
+                $psi.FileName = "winget.exe"
+                $psi.Arguments = $upgradeArgs
+                $psi.RedirectStandardOutput = $true
+                $psi.RedirectStandardError = $true
+                $psi.UseShellExecute = $false
+                $psi.CreateNoWindow = $false
+
+                $process = [System.Diagnostics.Process]::Start($psi)
+                $lastProgressReport = [DateTime]::MinValue
+
+                while (-not $process.StandardOutput.EndOfStream) {
+                    $line = $process.StandardOutput.ReadLine()
+                    if ($line) { Write-Host $line }
+
+                    # Parse WinGet download progress: "  20.0 MB /  197 MB"
+                    if ($line -match '(\d+\.?\d*)\s+MB\s*/\s*(\d+\.?\d*)\s+MB') {
+                        $dlMB    = [double]$Matches[1]
+                        $totMB   = [double]$Matches[2]
+                        $nowTime = [DateTime]::Now
+                        # Throttle: report at most every 2 seconds
+                        if (($nowTime - $lastProgressReport).TotalSeconds -ge 2) {
+                            try {
+                                $progressBody = (@{ downloadedMB = $dlMB; totalMB = $totMB } | ConvertTo-Json -Compress)
+                                Invoke-RestMethod -Uri "$ServerUrl/agent/v1/jobs/$jobId/progress" `
+                                    -Method Patch -Headers $headers -Body $progressBody `
+                                    -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+                            } catch {}
+                            $lastProgressReport = $nowTime
+                        }
+                    }
+                }
+                $process.WaitForExit()
                 $exitCode = $process.ExitCode
                 Write-Host "[UPDATE] WinGet installer exited with code: $exitCode" -ForegroundColor Cyan
 

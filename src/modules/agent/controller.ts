@@ -91,6 +91,21 @@ export class AgentController {
       next(error);
     }
   }
+
+  async reportJobProgress(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { downloadedMB, totalMB } = req.body as { downloadedMB: number; totalMB: number };
+      const result = await agentService.reportJobProgress(
+        req.device!.id,
+        req.params.id,
+        downloadedMB,
+        totalMB
+      );
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const agentController = new AgentController();

@@ -598,6 +598,30 @@ export class AgentService {
       leaseExpiresAt: leaseExpiresAt.toISOString(),
     };
   }
+
+  async reportJobProgress(deviceId: string, jobId: string, downloadedMB: number, totalMB: number) {
+    // Lightweight fire-and-forget update — just validates ownership and writes two columns
+    const job = await prisma.job.findFirst({
+      where: {
+        id: jobId,
+        deviceId,
+        status: { in: [JobStatus.RUNNING, JobStatus.QUEUED] },
+      },
+      select: { id: true },
+    });
+
+    if (!job) {
+      // Not an error we need to surface loudly — job may have just finished
+      return { status: 'ignored' };
+    }
+
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { downloadedMB, totalMB },
+    });
+
+    return { status: 'progress_recorded' };
+  }
 }
 
 export const agentService = new AgentService();
