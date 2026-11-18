@@ -102,8 +102,8 @@ export class ApplicationService {
       meta: {
         page,
         pageSize,
-        total: dedupedData.length < total ? dedupedData.length : total,
-        totalPages: Math.ceil((dedupedData.length < total ? dedupedData.length : total) / pageSize),
+        total,
+        totalPages: Math.ceil(total / pageSize),
       },
     };
   }

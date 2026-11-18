@@ -9,7 +9,7 @@ export const listApplicationsQuerySchema = z.object({
   sort: z.enum(['displayName', 'installedVersion', 'matchStatus', 'updatedAt', 'createdAt']).default('displayName'),
   order: z.enum(['asc', 'desc']).default('asc'),
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  pageSize: z.coerce.number().int().min(1).max(500).default(50),
 });
 
 export const applicationIdParamSchema = z.object({

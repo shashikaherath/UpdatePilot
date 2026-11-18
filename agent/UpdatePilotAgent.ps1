@@ -693,25 +693,16 @@ while ($true) {
                 Write-Host "[UPDATE] Installing verified package: $pkgId (Target: $targetVer)..." -ForegroundColor Cyan
 
                 # Construct safe, allowlisted WinGet upgrade arguments
-                $upgradeArgs = "upgrade --id `"$pkgId`" --exact --accept-package-agreements --accept-source-agreements --disable-interactivity"
+                $targetArgs = @("upgrade", "--id", "$pkgId", "--exact", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity", "--silent")
                 if ($targetVer -and $targetVer -ne "latest" -and $targetVer -ne "unknown") {
-                    $upgradeArgs = "upgrade --id `"$pkgId`" --exact --version `"$targetVer`" --accept-package-agreements --accept-source-agreements --disable-interactivity"
+                    $targetArgs = @("upgrade", "--id", "$pkgId", "--exact", "--version", "$targetVer", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity", "--silent")
                 }
 
-                # Stream WinGet output so we can capture MB progress lines (e.g. "20.0 MB /  180 MB")
-                $psi = New-Object System.Diagnostics.ProcessStartInfo
-                $psi.FileName = "winget.exe"
-                $psi.Arguments = $upgradeArgs
-                $psi.RedirectStandardOutput = $true
-                $psi.RedirectStandardError = $true
-                $psi.UseShellExecute = $false
-                $psi.CreateNoWindow = $false
-
-                $process = [System.Diagnostics.Process]::Start($psi)
                 $lastProgressReport = [DateTime]::MinValue
 
-                while (-not $process.StandardOutput.EndOfStream) {
-                    $line = $process.StandardOutput.ReadLine()
+                # Stream WinGet output safely using native PowerShell pipeline to prevent pipe deadlocks
+                & winget.exe @targetArgs 2>&1 | ForEach-Object {
+                    $line = $_.ToString()
                     if ($line) { Write-Host $line }
 
                     # Parse WinGet download progress: "  20.0 MB /  197 MB"
@@ -732,8 +723,7 @@ while ($true) {
                         }
                     }
                 }
-                $process.WaitForExit()
-                $exitCode = $process.ExitCode
+                $exitCode = $LASTEXITCODE
                 Write-Host "[UPDATE] WinGet installer exited with code: $exitCode" -ForegroundColor Cyan
 
                 # Verification: Rescan package version on the computer

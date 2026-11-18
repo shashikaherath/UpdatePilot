@@ -49,6 +49,7 @@ export const ApplicationsPage: React.FC = () => {
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>('all');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(50);
 
   // Detail Modal
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
@@ -79,7 +80,7 @@ export const ApplicationsPage: React.FC = () => {
       setError(null);
       const params: ListApplicationsParams = {
         page,
-        pageSize: 15,
+        pageSize,
         q: searchTerm.trim() || undefined,
         status: statusFilter || undefined,
         deviceId: selectedDevice !== 'all' ? selectedDevice : undefined,
@@ -92,7 +93,7 @@ export const ApplicationsPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [page, searchTerm, statusFilter, selectedDevice]);
+  }, [page, pageSize, searchTerm, statusFilter, selectedDevice]);
 
   useEffect(() => {
     void fetchApps();
@@ -413,10 +414,29 @@ export const ApplicationsPage: React.FC = () => {
           </div>
 
           {/* Pagination Controls */}
-          <div className="flex items-center justify-between px-4 py-3 bg-slate-50/70 border-t border-slate-200 text-xs text-slate-600">
-            <span>
-              Showing page <strong>{meta.page}</strong> of <strong>{meta.totalPages}</strong> ({meta.total} applications)
-            </span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 bg-slate-50/70 border-t border-slate-200 text-xs text-slate-600">
+            <div className="flex items-center gap-3">
+              <span>
+                Showing <strong>{applications.length}</strong> of <strong>{meta.total}</strong> applications (Page {meta.page} of {meta.totalPages})
+              </span>
+              <div className="flex items-center gap-1.5 ml-2">
+                <span className="text-slate-400">Rows:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="bg-white border border-slate-200 rounded px-2 py-0.5 text-xs text-slate-700 font-medium focus:outline-none"
+                >
+                  <option value={15}>15</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={250}>All (250)</option>
+                </select>
+              </div>
+            </div>
 
             <div className="flex items-center gap-1">
               <Button
